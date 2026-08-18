@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
 import { listarPedidos, registrarBaixa } from "../lib/pedidos";
-import { formatCurrency, formatDate, todayISO, FORMAS_PAGAMENTO } from "../lib/constants";
+import { formatCurrency, formatDate, todayISO, FORMAS_PAGAMENTO, pedidoEstaAtrasado } from "../lib/constants";
 
 export default function ValesRecebidos() {
   const [sub, setSub] = useState("vales");
@@ -109,9 +109,7 @@ export default function ValesRecebidos() {
         ) : (
           vales.map((p) => {
             const saldo = Number(p.valor) - Number(p.valorPago || 0);
-            const atrasado = p.formaPagamento?.tipo === "cheque" && p.formaPagamento?.prazoDias
-              ? new Date(p.data) < new Date(Date.now() - p.formaPagamento.prazoDias * 86400000)
-              : false;
+            const atrasado = pedidoEstaAtrasado(p);
             return (
               <div key={p.id} className="list-item" onClick={() => abrirBaixa(p)}>
                 <div>

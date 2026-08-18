@@ -13,7 +13,10 @@ import { db } from "./firebase";
 const pedidosRef = collection(db, "pedidos");
 
 // pedido: { clienteId, clienteCodigo, clienteNome, clienteCidade, clienteEstado,
-//   valor, valorPago, data, desconto, formaPagamento: { tipo, obs, prazoDias, numParcelas },
+//   itens: [{ valor, data }],
+//   valor (soma dos itens), valorPago (soma do que já entrou, ex: dinheiro),
+//   data (data do lançamento), desconto,
+//   formasPagamento: [{ tipo, valor, ...extras (cheque: valorTotal, numFolhas, prazoUltimoCheque, parcelas) }],
 //   status: 'aberto' | 'pago', createdAt }
 export async function criarPedido(pedido) {
   const valor = Number(pedido.valor) || 0;

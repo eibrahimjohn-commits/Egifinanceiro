@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import "../components/ui.css";
 import { listarPedidos } from "../lib/pedidos";
 import { listarClientes } from "../lib/clientes";
-import { formatCurrency, formatDate } from "../lib/constants";
+import { formatCurrency, formatDate, pedidoEstaAtrasado } from "../lib/constants";
 
 const DIAS_INATIVO = 60;
 
@@ -25,14 +25,8 @@ export default function Analises() {
 
   const hoje = new Date();
 
-  // Clientes com pagamento atrasado (vale/cheque em aberto passando do prazo)
-  const atrasados = pedidos.filter((p) => {
-    if (p.status !== "aberto") return false;
-    const prazoDias = p.formaPagamento?.prazoDias || 0;
-    if (!prazoDias) return false;
-    const limite = new Date(new Date(p.data).getTime() + prazoDias * 86400000);
-    return hoje > limite;
-  });
+  // Clientes com pagamento atrasado (parcela de cheque com data já vencida)
+  const atrasados = pedidos.filter(pedidoEstaAtrasado);
 
   // Clientes inativos: última compra há mais de 60 dias, sem vale em aberto
   const ultimaCompraPorCliente = {};
