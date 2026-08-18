@@ -1,0 +1,63 @@
+@import url("https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Nunito:wght@400;500;600;700;800&display=swap");
+
+:root {
+  --pink: #ff4d8d;
+  --pink-light: #ffe3ef;
+  --grape: #7c3aed;
+  --grape-light: #f0e7fe;
+  --yellow: #ffc93c;
+  --yellow-light: #fff6e0;
+  --green: #22c55e;
+  --green-light: #e8faf0;
+  --red: #ef4444;
+  --red-light: #fdeaea;
+  --ink: #2b2140;
+  --ink-soft: #6b6280;
+  --bg: #fbf9fd;
+  --card: #ffffff;
+  --border: #ece6f5;
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Nunito", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, .display {
+  font-family: "Baloo 2", sans-serif;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0;
+}
+
+button, input, select {
+  font-family: inherit;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+a { color: var(--grape); }
+
+::selection { background: var(--pink-light); }
+
+/* focus visibility */
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--grape);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
