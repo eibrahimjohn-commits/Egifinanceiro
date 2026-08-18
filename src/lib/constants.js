@@ -8,9 +8,10 @@ export const FORMAS_PAGAMENTO = [
   { value: "boleto", label: "Boleto" },
 ];
 
-// Formas que são creditadas imediatamente como recebidas ao lançar o pedido.
+// Formas que são creditadas imediatamente como recebidas ao lançar o pedido
+// (cheque conta como recebido pois já está fisicamente em mãos, mesmo com data futura).
 // Todas as outras ficam em aberto (Vales) até serem conferidas/baixadas.
-export const FORMAS_RECEBIMENTO_IMEDIATO = ["dinheiro"];
+export const FORMAS_RECEBIMENTO_IMEDIATO = ["dinheiro", "cheque"];
 
 // Divide um valor total em N parcelas iguais, ajustando centavos na última parcela.
 export function dividirValorIgualmente(valorTotal, numParcelas) {
@@ -68,6 +69,20 @@ export function pedidoEstaAtrasado(pedido) {
     if (f.tipo !== "cheque" || !f.parcelas) return false;
     return f.parcelas.some((p) => new Date(p.data + "T00:00:00") < hoje);
   });
+}
+
+// Extrai o percentual numérico de um texto livre de desconto, ex: "5% à vista" -> 5
+export function parseDescontoPercent(texto) {
+  if (!texto) return 0;
+  const match = String(texto).match(/([\d]+(?:[.,]\d+)?)\s*%/);
+  if (!match) return 0;
+  return parseFloat(match[1].replace(",", "."));
+}
+
+// Valor efetivamente devido pelo cliente, já descontado o percentual de desconto (se houver).
+export function calcularValorDevido(valorBruto, descontoTexto) {
+  const percent = parseDescontoPercent(descontoTexto);
+  return Number(valorBruto) * (1 - percent / 100);
 }
 
 export function todayISO() {

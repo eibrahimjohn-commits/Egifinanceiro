@@ -67,7 +67,7 @@ export default function Analises() {
               <div>
                 <strong>{p.clienteNome}</strong>
                 <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                  Pedido em {formatDate(p.data)} · {formatCurrency(Number(p.valor) - Number(p.valorPago || 0))}
+                  Pedido em {formatDate(p.data)} · {formatCurrency(Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0))}
                 </div>
               </div>
               <span className="badge badge-atraso">Atrasado</span>

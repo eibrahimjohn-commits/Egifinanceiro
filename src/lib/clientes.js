@@ -87,7 +87,7 @@ export async function consultarCnpj(cnpj) {
 
   return {
     razaoSocial: data.razao_social || "",
-    nome: data.nome_fantasia || data.razao_social || "",
+    nomeFantasia: data.nome_fantasia || data.razao_social || "",
     cidade: data.municipio || "",
     estado: data.uf || "",
   };

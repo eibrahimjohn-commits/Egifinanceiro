@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import "../components/ui.css";
 import { buscarCliente, salvarCliente, consultarCnpj } from "../lib/clientes";
 import { criarPedido } from "../lib/pedidos";
@@ -10,6 +10,7 @@ import {
   formatCurrency,
   formatDate,
   calcularParcelasCheque,
+  calcularValorDevido,
 } from "../lib/constants";
 
 const CLIENTE_VAZIO = {
@@ -35,8 +36,10 @@ function novaForma() {
 export default function Pedidos() {
   const [cliente, setCliente] = useState(CLIENTE_VAZIO);
   const [matches, setMatches] = useState([]);
+  const [sugestoesNome, setSugestoesNome] = useState([]);
   const [buscandoCampo, setBuscandoCampo] = useState(null);
   const [buscandoCnpj, setBuscandoCnpj] = useState(false);
+  const nomeDebounceRef = useRef(null);
 
   const [itens, setItens] = useState([novoItem()]);
   const [formas, setFormas] = useState([novaForma()]);
@@ -53,7 +56,7 @@ export default function Pedidos() {
     setCliente((c) => ({ ...c, [campo]: valor }));
   }
 
-  // Busca ao sair de um dos 4 campos-chave (código, nome, razão social, cnpj)
+  // Busca ao sair de código, razão social ou CNPJ
   async function handleBlurCampo(campo) {
     const termo = cliente[campo];
     if (!termo || !termo.trim()) return;
@@ -69,10 +72,23 @@ export default function Pedidos() {
       } else if (encontrados.length > 1) {
         setMatches(encontrados);
       }
-      // se não achar nada, mantém o que a pessoa digitou (cadastro novo)
     } finally {
       setBuscandoCampo(null);
     }
+  }
+
+  // Busca em tempo real (debounced) enquanto digita o nome, mostrando lista suspensa
+  function handleChangeNome(valor) {
+    atualizarCliente("nome", valor);
+    if (nomeDebounceRef.current) clearTimeout(nomeDebounceRef.current);
+    if (!valor || valor.trim().length < 2) {
+      setSugestoesNome([]);
+      return;
+    }
+    nomeDebounceRef.current = setTimeout(async () => {
+      const { exact, matches: encontrados } = await buscarCliente(valor);
+      setSugestoesNome(exact ? [exact] : encontrados);
+    }, 300);
   }
 
   function preencherCliente(c) {
@@ -88,14 +104,23 @@ export default function Pedidos() {
       estado: c.estado || "",
     });
     setMatches([]);
+    setSugestoesNome([]);
   }
 
+  // Consulta pública de CNPJ: preenche razão social/cidade/estado, mas NUNCA sobrescreve
+  // o campo Nome do Cliente se ele já tiver algo digitado.
   async function handleConsultarCnpj() {
     if (!cliente.cnpj) return;
     setBuscandoCnpj(true);
     try {
       const dados = await consultarCnpj(cliente.cnpj);
-      setCliente((c) => ({ ...c, ...dados }));
+      setCliente((c) => ({
+        ...c,
+        razaoSocial: dados.razaoSocial || c.razaoSocial,
+        cidade: dados.cidade || c.cidade,
+        estado: dados.estado || c.estado,
+        nome: c.nome || dados.nomeFantasia,
+      }));
       mostrarToast("Dados do CNPJ preenchidos");
     } catch (e) {
       mostrarToast(e.message);
@@ -107,11 +132,11 @@ export default function Pedidos() {
   function resetTudo() {
     setCliente(CLIENTE_VAZIO);
     setMatches([]);
+    setSugestoesNome([]);
     setItens([novoItem()]);
     setFormas([novaForma()]);
   }
 
-  // --- Itens (valor + data), múltiplos ---
   function addItem() {
     setItens((arr) => [...arr, novoItem()]);
   }
@@ -122,7 +147,6 @@ export default function Pedidos() {
     setItens((arr) => arr.map((it, idx) => (idx === i ? { ...it, [campo]: valor } : it)));
   }
 
-  // --- Formas de pagamento, múltiplas ---
   function addForma() {
     setFormas((arr) => [...arr, novaForma()]);
   }
@@ -134,10 +158,12 @@ export default function Pedidos() {
   }
 
   const valorTotalPedido = itens.reduce((s, it) => s + (Number(it.valor) || 0), 0);
+  const valorEsperado = calcularValorDevido(valorTotalPedido, cliente.descontoPadrao);
   const valorAlocado = formas.reduce((s, f) => {
     return s + (f.tipo === "cheque" ? Number(f.valorTotal) || 0 : Number(f.valor) || 0);
   }, 0);
-  const diferenca = valorTotalPedido - valorAlocado;
+  const diferenca = valorEsperado - valorAlocado;
+  const margemOk = Math.abs(diferenca) <= valorEsperado * 0.005;
 
   async function handleSalvar(e) {
     e.preventDefault();
@@ -183,6 +209,18 @@ export default function Pedidos() {
           return { tipo: f.tipo, valor: Number(f.valor) };
         });
 
+      // Reconciliação automática: se o alocado não bater com (valor - desconto),
+      // com margem de 0,5%, o restante vira Vale.
+      const totalAlocado = formasPagamento.reduce((s, f) => s + f.valor, 0);
+      const faltante = valorEsperado - totalAlocado;
+      const margem = valorEsperado * 0.005;
+      let avisoVale = null;
+      if (faltante > margem) {
+        const valorVale = Number(faltante.toFixed(2));
+        formasPagamento.push({ tipo: "vale", valor: valorVale });
+        avisoVale = `Diferença de ${formatCurrency(valorVale)} lançada como vale.`;
+      }
+
       const valorPago = formasPagamento
         .filter((f) => FORMAS_RECEBIMENTO_IMEDIATO.includes(f.tipo))
         .reduce((s, f) => s + f.valor, 0);
@@ -195,13 +233,14 @@ export default function Pedidos() {
         clienteEstado: cliente.estado,
         itens: itens.map((it) => ({ valor: Number(it.valor) || 0, data: it.data })),
         valor: valorTotalPedido,
+        valorDevido: valorEsperado,
         valorPago,
         data: itens[0]?.data || todayISO(),
         desconto: cliente.descontoPadrao,
         formasPagamento,
       });
 
-      mostrarToast("Pedido lançado com sucesso!");
+      mostrarToast(avisoVale || "Pedido lançado com sucesso!");
       resetTudo();
     } catch (err) {
       mostrarToast("Erro ao salvar: " + err.message);
@@ -224,11 +263,29 @@ export default function Pedidos() {
               onChange={(e) => atualizarCliente("codigo", e.target.value)}
               onBlur={() => handleBlurCampo("codigo")} />
           </div>
-          <div className="field">
+          <div className="field" style={{ position: "relative" }}>
             <label>Nome do cliente</label>
-            <input className="input" value={cliente.nome}
-              onChange={(e) => atualizarCliente("nome", e.target.value)}
-              onBlur={() => handleBlurCampo("nome")} />
+            <input className="input" value={cliente.nome} autoComplete="off"
+              onChange={(e) => handleChangeNome(e.target.value)}
+              onFocus={() => cliente.nome.length >= 2 && handleChangeNome(cliente.nome)} />
+            {sugestoesNome.length > 0 && (
+              <div style={{
+                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
+                background: "white", border: "1.5px solid var(--border)", borderRadius: 12,
+                marginTop: 4, maxHeight: 220, overflowY: "auto",
+                boxShadow: "0 8px 24px rgba(0,0,0,0.1)",
+              }}>
+                {sugestoesNome.map((m) => (
+                  <div key={m.id} className="list-item" style={{ margin: 0, borderRadius: 0, border: "none", borderBottom: "1px solid var(--border)" }}
+                    onClick={() => preencherCliente(m)}>
+                    <div>
+                      <strong>{m.nome}</strong>
+                      <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Cód {m.codigo}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <div className="row">
@@ -331,8 +388,13 @@ export default function Pedidos() {
           + Adicionar outro pedido
         </button>
 
-        <div style={{ fontWeight: 700, fontSize: 16, margin: "16px 0 8px" }}>
-          Total do pedido: {formatCurrency(valorTotalPedido)}
+        <div style={{ margin: "16px 0 8px" }}>
+          <div style={{ fontWeight: 700, fontSize: 16 }}>Total do pedido: {formatCurrency(valorTotalPedido)}</div>
+          {valorEsperado < valorTotalPedido - 0.01 && (
+            <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+              Valor esperado com desconto: <strong>{formatCurrency(valorEsperado)}</strong>
+            </div>
+          )}
         </div>
 
         <h3 style={{ fontSize: 15, margin: "8px 0" }}>Forma(s) de pagamento</h3>
@@ -395,15 +457,12 @@ export default function Pedidos() {
         </button>
 
         {valorTotalPedido > 0 && (
-          <div style={{
-            marginTop: 14, fontSize: 14, fontWeight: 600,
-            color: Math.abs(diferenca) < 0.01 ? "var(--green)" : "var(--red)",
-          }}>
-            {Math.abs(diferenca) < 0.01
-              ? "✓ Valor do pedido totalmente alocado nas formas de pagamento"
+          <div style={{ marginTop: 14, fontSize: 14, fontWeight: 600, color: margemOk ? "var(--green)" : "var(--yellow)" }}>
+            {margemOk
+              ? "✓ Valor alocado bate com o esperado (após desconto)"
               : diferenca > 0
-              ? `Faltam ${formatCurrency(diferenca)} para alocar`
-              : `Alocado ${formatCurrency(-diferenca)} a mais que o pedido`}
+              ? `Faltam ${formatCurrency(diferenca)} — a diferença será lançada como vale ao salvar`
+              : `Alocado ${formatCurrency(-diferenca)} a mais que o esperado`}
           </div>
         )}
 

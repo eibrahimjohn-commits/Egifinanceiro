@@ -14,18 +14,21 @@ const pedidosRef = collection(db, "pedidos");
 
 // pedido: { clienteId, clienteCodigo, clienteNome, clienteCidade, clienteEstado,
 //   itens: [{ valor, data }],
-//   valor (soma dos itens), valorPago (soma do que já entrou, ex: dinheiro),
+//   valor (soma bruta dos itens), valorDevido (valor - desconto), valorPago (já recebido),
 //   data (data do lançamento), desconto,
-//   formasPagamento: [{ tipo, valor, ...extras (cheque: valorTotal, numFolhas, prazoUltimoCheque, parcelas) }],
+//   formasPagamento: [{ tipo, valor, ...extras (cheque: numFolhas, prazoUltimoCheque, parcelas) }],
+//   pagamentos: [{ valor, data, formaPagamento, conta? }] (histórico de baixas),
 //   status: 'aberto' | 'pago', createdAt }
 export async function criarPedido(pedido) {
   const valor = Number(pedido.valor) || 0;
+  const valorDevido = Number(pedido.valorDevido ?? valor);
   const valorPago = Number(pedido.valorPago) || 0;
   const payload = {
     ...pedido,
     valor,
+    valorDevido,
     valorPago,
-    status: valorPago >= valor ? "pago" : "aberto",
+    status: valorPago >= valorDevido - 0.01 ? "pago" : "aberto",
     createdAt: serverTimestamp(),
   };
   const docRef = await addDoc(pedidosRef, payload);
@@ -39,14 +42,16 @@ export async function listarPedidos() {
 
 // Registra uma baixa (pagamento) em um pedido em aberto
 export async function registrarBaixa(pedidoId, pedidoAtual, baixa) {
+  const valorDevido = Number(pedidoAtual.valorDevido ?? pedidoAtual.valor);
   const novoValorPago = Number(pedidoAtual.valorPago || 0) + Number(baixa.valor);
-  const novoStatus = novoValorPago >= Number(pedidoAtual.valor) ? "pago" : "aberto";
+  const novoStatus = novoValorPago >= valorDevido - 0.01 ? "pago" : "aberto";
 
   const historico = pedidoAtual.pagamentos || [];
   historico.push({
     valor: Number(baixa.valor),
     data: baixa.data,
     formaPagamento: baixa.formaPagamento,
+    conta: baixa.conta || null,
   });
 
   await updateDoc(doc(db, "pedidos", pedidoId), {
