@@ -11,6 +11,8 @@ export default function BaseDados() {
   const [editando, setEditando] = useState(null); // objeto cliente sendo editado
   const [toast, setToast] = useState("");
   const [filtro, setFiltro] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("");
+  const [ordenacao, setOrdenacao] = useState("nome_asc");
   const [buscandoCnpj, setBuscandoCnpj] = useState(false);
 
   const [importando, setImportando] = useState(false);
@@ -175,21 +177,45 @@ export default function BaseDados() {
     (c) => (c.cnpj || "").replace(/\D/g, "").length === 14 && !c.infoExtra?.consultadoEm
   ).length;
 
-  const listaFiltrada = clientes.filter((c) => {
-    if (!filtro) return true;
-    const termo = filtro.toLowerCase().trim();
-    const digitos = filtro.replace(/\D/g, "");
-    const telefones = [...(c.telefones || []), c.whatsapp || ""].join(" ");
-    return (
-      (c.nome || "").toLowerCase().includes(termo) ||
-      (c.razaoSocial || "").toLowerCase().includes(termo) ||
-      (c.codigo || "").toLowerCase().includes(termo) ||
-      (c.cidade || "").toLowerCase().includes(termo) ||
-      (c.representante || "").toLowerCase().includes(termo) ||
-      (digitos.length >= 3 && (c.cnpjDigits || "").includes(digitos)) ||
-      (digitos.length >= 4 && telefones.includes(digitos))
-    );
-  });
+  const estadosPresentes = Array.from(
+    new Set(clientes.map((c) => (c.estado || "").trim().toUpperCase()).filter(Boolean))
+  ).sort();
+
+  function dataCadastroDe(c) {
+    return c.createdAt?.seconds ? c.createdAt.seconds * 1000 : (c.updatedAt?.seconds ? c.updatedAt.seconds * 1000 : 0);
+  }
+
+  const listaFiltrada = clientes
+    .filter((c) => {
+      if (filtroEstado && (c.estado || "").toUpperCase() !== filtroEstado) return false;
+      if (!filtro) return true;
+      const termo = filtro.toLowerCase().trim();
+      const digitos = filtro.replace(/\D/g, "");
+      const telefones = [...(c.telefones || []), c.whatsapp || ""].join(" ");
+      return (
+        (c.nome || "").toLowerCase().includes(termo) ||
+        (c.razaoSocial || "").toLowerCase().includes(termo) ||
+        (c.codigo || "").toLowerCase().includes(termo) ||
+        (c.cidade || "").toLowerCase().includes(termo) ||
+        (c.representante || "").toLowerCase().includes(termo) ||
+        (digitos.length >= 3 && (c.cnpjDigits || "").includes(digitos)) ||
+        (digitos.length >= 4 && telefones.includes(digitos))
+      );
+    })
+    .sort((a, b) => {
+      const [campo, dir] = ordenacao.split("_");
+      const mult = dir === "asc" ? 1 : -1;
+      if (campo === "nome") return mult * (a.nome || "").localeCompare(b.nome || "", "pt-BR");
+      if (campo === "razaoSocial") return mult * (a.razaoSocial || "").localeCompare(b.razaoSocial || "", "pt-BR");
+      if (campo === "estado") return mult * (a.estado || "").localeCompare(b.estado || "", "pt-BR");
+      if (campo === "cadastro") return mult * (dataCadastroDe(a) - dataCadastroDe(b));
+      if (campo === "ultimaCompra") {
+        const da = new Date(ultimaCompraDe(a) || 0).getTime();
+        const db_ = new Date(ultimaCompraDe(b) || 0).getTime();
+        return mult * (da - db_);
+      }
+      return 0;
+    });
 
   if (editando) {
     const info = editando.infoExtra;
@@ -361,8 +387,9 @@ export default function BaseDados() {
     <div>
       {toast && <div className="toast">{toast}</div>}
 
-      <div className="card">
-        <h2 className="card-title">Importar planilha</h2>
+      <div className="ferramentas-grid">
+      <div className="card ferramenta-card">
+        <h2 className="card-title" style={{ fontSize: 15 }}>Importar planilha</h2>
         {!preview ? (
           <>
             <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
@@ -424,8 +451,8 @@ export default function BaseDados() {
         )}
       </div>
 
-      <div className="card">
-        <h2 className="card-title">Limpar cadastros duplicados</h2>
+      <div className="card ferramenta-card">
+        <h2 className="card-title" style={{ fontSize: 15 }}>Limpar duplicados</h2>
         {!analiseDup ? (
           <>
             <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
@@ -470,8 +497,8 @@ export default function BaseDados() {
         )}
       </div>
 
-      <div className="card">
-        <h2 className="card-title">Buscar dados públicos em lote</h2>
+      <div className="card ferramenta-card">
+        <h2 className="card-title" style={{ fontSize: 15 }}>Dados públicos em lote</h2>
         {!enriquecendo ? (
           <>
             <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
@@ -508,10 +535,32 @@ export default function BaseDados() {
         )}
       </div>
 
+      </div>
+
       <div className="card">
-        <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
-          <input className="input" placeholder="Buscar por nome, código ou CNPJ"
+        <div className="row" style={{ marginBottom: 8 }}>
+          <div className="field" style={{ marginBottom: 0, flex: 2 }}>
+          <input className="input" placeholder="Buscar por nome, razão social, código, CNPJ, cidade..."
             value={filtro} onChange={(e) => setFiltro(e.target.value)} />
+          </div>
+          <div className="field" style={{ marginBottom: 0, flex: "0 0 110px" }}>
+            <select className="input" value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
+              <option value="">Todos UF</option>
+              {estadosPresentes.map((uf) => <option key={uf} value={uf}>{uf}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ marginBottom: 0, flex: "0 0 180px" }}>
+            <select className="input" value={ordenacao} onChange={(e) => setOrdenacao(e.target.value)}>
+              <option value="nome_asc">Nome (A-Z)</option>
+              <option value="nome_desc">Nome (Z-A)</option>
+              <option value="razaoSocial_asc">Razão social (A-Z)</option>
+              <option value="estado_asc">Estado (A-Z)</option>
+              <option value="cadastro_desc">Cadastro (recente)</option>
+              <option value="cadastro_asc">Cadastro (antigo)</option>
+              <option value="ultimaCompra_desc">Última compra (recente)</option>
+              <option value="ultimaCompra_asc">Última compra (antiga)</option>
+            </select>
+          </div>
           <button className="btn btn-primary" style={{ whiteSpace: "nowrap" }}
             onClick={() => setEditando({ codigo: "", nome: "" })}>
             + Novo
@@ -519,7 +568,7 @@ export default function BaseDados() {
         </div>
         <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
           <strong>{clientes.length}</strong> clientes na base
-          {filtro && ` · ${listaFiltrada.length} correspondem à busca`}
+          {(filtro || filtroEstado) && ` · ${listaFiltrada.length} correspondem ao filtro`}
         </div>
       </div>
 

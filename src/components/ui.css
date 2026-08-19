@@ -184,4 +184,22 @@
   .clientes-grid > .list-item {
     margin-bottom: 0;
   }
+
+  /* Base de Dados: as 3 ferramentas (importar/duplicados/enriquecer) lado a lado, compactas */
+  .ferramentas-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .ferramenta-card {
+    padding: 14px;
+    margin-bottom: 0;
+  }
+  .ferramenta-card p {
+    font-size: 12px !important;
+  }
+  .ferramenta-card .btn {
+    padding: 9px 14px;
+    font-size: 13px;
+  }
 }
