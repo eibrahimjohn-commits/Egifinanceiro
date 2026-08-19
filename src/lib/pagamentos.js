@@ -9,6 +9,8 @@ export async function criarPagamentoSaida(pagamento) {
 }
 
 export async function listarPagamentosSaida() {
-  const snap = await getDocs(query(ref, orderBy("data", "desc")));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const snap = await getDocs(ref);
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => new Date(b.data || 0) - new Date(a.data || 0));
 }

@@ -49,8 +49,10 @@ export async function buscarEmpresas({ cidadeNome, uf, cnae, pagina = 1 }) {
 }
 
 export async function listarProspeccoes() {
-  const snap = await getDocs(query(prospeccoesRef, orderBy("criadoEm", "desc")));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const snap = await getDocs(prospeccoesRef);
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
 }
 
 export async function salvarProspeccao(empresa) {

@@ -57,8 +57,13 @@ export async function buscarCliente(termo) {
 }
 
 export async function listarClientes() {
-  const snap = await getDocs(query(clientesRef, orderBy("nome")));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // Importante: NÃO usar orderBy() aqui. O Firestore exclui silenciosamente
+  // qualquer documento que não tenha o campo usado na ordenação, o que fazia
+  // clientes sumirem da lista sem nenhum erro. Ordenamos no cliente.
+  const snap = await getDocs(clientesRef);
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
 }
 
 export async function salvarCliente(dadosCliente, id = null) {

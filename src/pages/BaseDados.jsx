@@ -105,10 +105,19 @@ export default function BaseDados() {
     if (!preview) return;
     setImportando(true);
     setProgresso({ feitos: 0, total: preview.linhas.length });
+    const totalPlanilha = preview.linhas.length;
     try {
       await importarClientes(preview.linhas, (feitos, total) => setProgresso({ feitos, total }));
-      mostrarToast(`${preview.linhas.length} clientes importados com sucesso!`);
       setPreview(null);
+      const lista = await listarClientes();
+      setClientes(lista);
+      if (lista.length < totalPlanilha) {
+        mostrarToast(
+          `${totalPlanilha} linhas enviadas, mas a base tem ${lista.length}. Alguns códigos podem se repetir entre importações.`
+        );
+      } else {
+        mostrarToast(`${totalPlanilha} clientes importados. Base agora tem ${lista.length}.`);
+      }
       carregar();
     } catch (err) {
       mostrarToast("Erro ao importar: " + err.message);
@@ -346,13 +355,17 @@ export default function BaseDados() {
       </div>
 
       <div className="card">
-        <div style={{ display: "flex", gap: 10, marginBottom: 4 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
           <input className="input" placeholder="Buscar por nome, código ou CNPJ"
             value={filtro} onChange={(e) => setFiltro(e.target.value)} />
           <button className="btn btn-primary" style={{ whiteSpace: "nowrap" }}
             onClick={() => setEditando({ codigo: "", nome: "" })}>
             + Novo
           </button>
+        </div>
+        <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+          <strong>{clientes.length}</strong> clientes na base
+          {filtro && ` · ${listaFiltrada.length} correspondem à busca`}
         </div>
       </div>
 

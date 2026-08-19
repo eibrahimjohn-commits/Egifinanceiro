@@ -36,8 +36,11 @@ export async function criarPedido(pedido) {
 }
 
 export async function listarPedidos() {
-  const snap = await getDocs(query(pedidosRef, orderBy("data", "desc")));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // Sem orderBy: o Firestore omite documentos sem o campo ordenado. Ordenamos no cliente.
+  const snap = await getDocs(pedidosRef);
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => new Date(b.data || 0) - new Date(a.data || 0));
 }
 
 // Registra uma baixa (pagamento) em um pedido em aberto
