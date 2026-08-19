@@ -108,6 +108,19 @@ export async function importarClientes(linhas, onProgresso) {
   }
   return processados;
 }
+export async function listarGruposUnicos() {
+  const snap = await getDocs(clientesRef);
+  const grupos = new Set();
+  snap.docs.forEach((d) => {
+    const g = (d.data().grupo || "").trim();
+    if (g) grupos.add(g);
+  });
+  return Array.from(grupos).sort();
+}
+
+// Consulta gratuita e pública de dados cadastrais de CNPJ via BrasilAPI.
+// Traz também informações públicas adicionais (telefone, situação cadastral, capital social).
+// Obs: faturamento da empresa NÃO é informação pública no Brasil (sigilo fiscal) — não é retornado.
 export async function consultarCnpj(cnpj) {
   const digits = onlyDigits(cnpj);
   if (digits.length !== 14) throw new Error("CNPJ precisa ter 14 dígitos");
@@ -116,10 +129,21 @@ export async function consultarCnpj(cnpj) {
   if (!resp.ok) throw new Error("CNPJ não encontrado na base pública");
   const data = await resp.json();
 
+  const telefone = data.ddd_telefone_1
+    ? `(${data.ddd_telefone_1.slice(0, 2)}) ${data.ddd_telefone_1.slice(2)}`
+    : "";
+
   return {
     razaoSocial: data.razao_social || "",
     nomeFantasia: data.nome_fantasia || data.razao_social || "",
     cidade: data.municipio || "",
     estado: data.uf || "",
+    infoExtra: {
+      telefone,
+      situacaoCadastral: data.descricao_situacao_cadastral || "",
+      capitalSocial: data.capital_social ?? null,
+      atividadePrincipal: data.cnae_fiscal_descricao || "",
+      consultadoEm: new Date().toISOString(),
+    },
   };
 }

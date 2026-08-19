@@ -6,6 +6,7 @@ const TABS = [
   { id: "pagamentos", label: "Pagamentos" },
   { id: "analises", label: "Análises" },
   { id: "base", label: "Base de Dados" },
+  { id: "prospeccao", label: "Prospecção" },
 ];
 
 export default function Layout({ active, onChange, wide, children }) {

@@ -149,4 +149,39 @@
     max-height: 480px;
     overflow-y: auto;
   }
+
+  /* Pedidos: bloco Cliente à esquerda, Pedido à direita */
+  .pedidos-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  .pedidos-grid > .card {
+    margin-bottom: 0;
+  }
+
+  /* Vales/Recebidos: lista em 3 colunas */
+  .lista-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .lista-grid > .list-item {
+    margin-bottom: 0;
+    height: 100%;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  /* Base de Dados: lista de clientes em 3 colunas */
+  .clientes-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .clientes-grid > .list-item {
+    margin-bottom: 0;
+  }
 }

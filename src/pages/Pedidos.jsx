@@ -23,6 +23,7 @@ const CLIENTE_VAZIO = {
   descontoPadrao: "",
   cidade: "",
   estado: "",
+  grupo: "",
 };
 
 function novoItem() {
@@ -102,6 +103,7 @@ export default function Pedidos() {
       descontoPadrao: c.descontoPadrao || "",
       cidade: c.cidade || "",
       estado: c.estado || "",
+      grupo: c.grupo || "",
     });
     setMatches([]);
     setSugestoesNome([]);
@@ -189,6 +191,7 @@ export default function Pedidos() {
           descontoPadrao: cliente.descontoPadrao,
           cidade: cliente.cidade,
           estado: cliente.estado,
+          grupo: cliente.grupo,
         },
         cliente.id
       );
@@ -231,6 +234,7 @@ export default function Pedidos() {
         clienteNome: cliente.nome,
         clienteCidade: cliente.cidade,
         clienteEstado: cliente.estado,
+        clienteGrupo: cliente.grupo || "",
         itens: itens.map((it) => ({ valor: Number(it.valor) || 0, data: it.data })),
         valor: valorTotalPedido,
         valorDevido: valorEsperado,
@@ -253,6 +257,7 @@ export default function Pedidos() {
     <form onSubmit={handleSalvar}>
       {toast && <div className="toast">{toast}</div>}
 
+      <div className="pedidos-grid">
       {/* BLOCO 1: CLIENTE */}
       <div className="card">
         <h2 className="card-title">Cliente</h2>
@@ -354,6 +359,12 @@ export default function Pedidos() {
               {ESTADOS_BR.map((uf) => <option key={uf} value={uf}>{uf}</option>)}
             </select>
           </div>
+        </div>
+        <div className="field">
+          <label>Grupo de cliente <span style={{ fontWeight: 400, color: "var(--ink-soft)" }}>(opcional, para juntar CNPJs do mesmo grupo)</span></label>
+          <input className="input" value={cliente.grupo}
+            onChange={(e) => atualizarCliente("grupo", e.target.value)}
+            placeholder="Ex: Rede Bijoux Ltda" />
         </div>
         {!cliente.id && (cliente.codigo || cliente.nome) && (
           <div style={{ fontSize: 13, color: "var(--grape)", fontWeight: 600 }}>
@@ -469,6 +480,7 @@ export default function Pedidos() {
         <button className="btn btn-primary btn-block" type="submit" disabled={salvando} style={{ marginTop: 16 }}>
           {salvando ? "Salvando..." : "Lançar pedido"}
         </button>
+      </div>
       </div>
     </form>
   );

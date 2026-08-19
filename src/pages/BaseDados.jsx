@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarClientes, salvarCliente, consultarCnpj, importarClientes } from "../lib/clientes";
+import { listarClientes, salvarCliente, consultarCnpj, importarClientes, listarGruposUnicos } from "../lib/clientes";
 import { lerPlanilhaClientes } from "../lib/importarPlanilha";
-import { ESTADOS_BR } from "../lib/constants";
+import { ESTADOS_BR, formatCurrency, formatDate } from "../lib/constants";
 
 export default function BaseDados() {
   const [clientes, setClientes] = useState([]);
@@ -15,6 +15,7 @@ export default function BaseDados() {
   const [importando, setImportando] = useState(false);
   const [preview, setPreview] = useState(null); // { linhas, aba }
   const [progresso, setProgresso] = useState(null);
+  const [grupos, setGrupos] = useState([]);
 
   async function carregar() {
     setCarregando(true);
@@ -23,7 +24,7 @@ export default function BaseDados() {
     setCarregando(false);
   }
 
-  useEffect(() => { carregar(); }, []);
+  useEffect(() => { carregar(); listarGruposUnicos().then(setGrupos); }, []);
 
   function mostrarToast(msg) {
     setToast(msg);
@@ -35,8 +36,15 @@ export default function BaseDados() {
     setBuscandoCnpj(true);
     try {
       const dados = await consultarCnpj(editando.cnpj);
-      setEditando((c) => ({ ...c, ...dados }));
-      mostrarToast("Dados do CNPJ preenchidos");
+      setEditando((c) => ({
+        ...c,
+        razaoSocial: dados.razaoSocial || c.razaoSocial,
+        cidade: dados.cidade || c.cidade,
+        estado: dados.estado || c.estado,
+        nome: c.nome || dados.nomeFantasia,
+        infoExtra: dados.infoExtra,
+      }));
+      mostrarToast("Dados públicos do CNPJ preenchidos");
     } catch (e) {
       mostrarToast(e.message);
     } finally {
@@ -46,7 +54,7 @@ export default function BaseDados() {
 
   async function handleArquivoSelecionado(e) {
     const file = e.target.files[0];
-    e.target.value = ""; // permite selecionar o mesmo arquivo de novo depois
+    e.target.value = "";
     if (!file) return;
     try {
       const resultado = await lerPlanilhaClientes(file);
@@ -97,6 +105,7 @@ export default function BaseDados() {
   );
 
   if (editando) {
+    const info = editando.infoExtra;
     return (
       <div>
         {toast && <div className="toast">{toast}</div>}
@@ -157,6 +166,43 @@ export default function BaseDados() {
                 placeholder="Ex: 5% à vista" />
             </div>
           </div>
+
+          <div className="field">
+            <label>Grupo de cliente</label>
+            <input className="input" list="lista-grupos" value={editando.grupo || ""}
+              onChange={(e) => setEditando({ ...editando, grupo: e.target.value })}
+              placeholder="Ex: Rede Bijoux Ltda (deixe em branco se for cliente único)" />
+            <datalist id="lista-grupos">
+              {grupos.map((g) => <option key={g} value={g} />)}
+            </datalist>
+            <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
+              Clientes com o mesmo grupo têm as compras somadas juntas na aba Vales.
+            </div>
+          </div>
+
+          <div className="field">
+            <label>Observação</label>
+            <textarea className="input" rows={3} value={editando.observacao || ""}
+              onChange={(e) => setEditando({ ...editando, observacao: e.target.value })}
+              placeholder="Anotações livres sobre esse cliente..." />
+          </div>
+
+          {info && (
+            <div className="field" style={{ background: "var(--bg)", borderRadius: 12, padding: 14 }}>
+              <label style={{ marginBottom: 8 }}>Informações públicas (Receita Federal)</label>
+              <div style={{ fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.8 }}>
+                {info.situacaoCadastral && <div>Situação cadastral: <strong style={{ color: "var(--ink)" }}>{info.situacaoCadastral}</strong></div>}
+                {info.telefone && <div>Telefone: <strong style={{ color: "var(--ink)" }}>{info.telefone}</strong></div>}
+                {info.capitalSocial != null && <div>Capital social: <strong style={{ color: "var(--ink)" }}>{formatCurrency(info.capitalSocial)}</strong></div>}
+                {info.atividadePrincipal && <div>Atividade principal: <strong style={{ color: "var(--ink)" }}>{info.atividadePrincipal}</strong></div>}
+                {info.consultadoEm && <div style={{ marginTop: 6, fontSize: 11 }}>Consultado em {formatDate(info.consultadoEm.slice(0, 10))}</div>}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 8, fontStyle: "italic" }}>
+                Faturamento não é uma informação pública no Brasil (sigilo fiscal), por isso não aparece aqui.
+              </div>
+            </div>
+          )}
+
           <div className="row">
             <button type="button" className="btn btn-ghost btn-block" onClick={() => setEditando(null)}>
               Cancelar
@@ -226,7 +272,8 @@ export default function BaseDados() {
       ) : listaFiltrada.length === 0 ? (
         <div className="empty-state">Nenhum cliente cadastrado ainda.</div>
       ) : (
-        listaFiltrada.map((c) => (
+        <div className="clientes-grid">
+        {listaFiltrada.map((c) => (
           <div key={c.id} className="list-item" onClick={() => setEditando(c)}>
             <div>
               <strong>{c.nome}</strong>
@@ -236,7 +283,8 @@ export default function BaseDados() {
             </div>
             <span>✎</span>
           </div>
-        ))
+        ))}
+        </div>
       )}
     </div>
   );
