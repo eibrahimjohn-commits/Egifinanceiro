@@ -9,6 +9,7 @@ import {
   where,
   orderBy,
   serverTimestamp,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
 
@@ -76,7 +77,37 @@ export async function salvarCliente(dadosCliente, id = null) {
   }
 }
 
-// Consulta gratuita e pública de dados cadastrais de CNPJ via BrasilAPI
+export async function importarClientes(linhas, onProgresso) {
+  // linhas: [{ codigo, nome, razaoSocial, cnpj, cidade, estado }]
+  const CHUNK = 400;
+  let processados = 0;
+  for (let i = 0; i < linhas.length; i += CHUNK) {
+    const lote = linhas.slice(i, i + CHUNK);
+    const batch = writeBatch(db);
+    lote.forEach((c) => {
+      const idSeguro = "cod_" + String(c.codigo).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const ref = doc(db, "clientes", idSeguro);
+      batch.set(
+        ref,
+        {
+          codigo: String(c.codigo),
+          nome: c.nome,
+          razaoSocial: c.razaoSocial || "",
+          cnpj: c.cnpj || "",
+          cnpjDigits: onlyDigits(c.cnpj || ""),
+          cidade: c.cidade || "",
+          estado: c.estado || "",
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    });
+    await batch.commit();
+    processados += lote.length;
+    if (onProgresso) onProgresso(processados, linhas.length);
+  }
+  return processados;
+}
 export async function consultarCnpj(cnpj) {
   const digits = onlyDigits(cnpj);
   if (digits.length !== 14) throw new Error("CNPJ precisa ter 14 dígitos");

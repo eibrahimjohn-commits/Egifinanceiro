@@ -10,7 +10,7 @@ export default function App() {
   const [tab, setTab] = useState("pedidos");
 
   return (
-    <Layout active={tab} onChange={setTab}>
+    <Layout active={tab} onChange={setTab} wide={tab === "analises"}>
       {tab === "pedidos" && <Pedidos />}
       {tab === "vales" && <ValesRecebidos />}
       {tab === "pagamentos" && <Pagamentos />}

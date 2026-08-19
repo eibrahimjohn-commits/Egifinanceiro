@@ -61,3 +61,10 @@
   width: 100%;
   margin: 0 auto;
 }
+
+/* Ajustes de tela maior (desktop) apenas — no celular o layout já fica em coluna única, sem alterações */
+@media (min-width: 900px) {
+  .content-wide {
+    max-width: 1240px;
+  }
+}

@@ -8,7 +8,7 @@ const TABS = [
   { id: "base", label: "Base de Dados" },
 ];
 
-export default function Layout({ active, onChange, children }) {
+export default function Layout({ active, onChange, wide, children }) {
   return (
     <div className="layout">
       <header className="topbar">
@@ -25,7 +25,7 @@ export default function Layout({ active, onChange, children }) {
           </button>
         ))}
       </nav>
-      <main className="content">{children}</main>
+      <main className={"content" + (wide ? " content-wide" : "")}>{children}</main>
     </div>
   );
 }

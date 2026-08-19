@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarClientes, salvarCliente, consultarCnpj } from "../lib/clientes";
+import { listarClientes, salvarCliente, consultarCnpj, importarClientes } from "../lib/clientes";
+import { lerPlanilhaClientes } from "../lib/importarPlanilha";
 import { ESTADOS_BR } from "../lib/constants";
 
 export default function BaseDados() {
@@ -10,6 +11,10 @@ export default function BaseDados() {
   const [toast, setToast] = useState("");
   const [filtro, setFiltro] = useState("");
   const [buscandoCnpj, setBuscandoCnpj] = useState(false);
+
+  const [importando, setImportando] = useState(false);
+  const [preview, setPreview] = useState(null); // { linhas, aba }
+  const [progresso, setProgresso] = useState(null);
 
   async function carregar() {
     setCarregando(true);
@@ -36,6 +41,39 @@ export default function BaseDados() {
       mostrarToast(e.message);
     } finally {
       setBuscandoCnpj(false);
+    }
+  }
+
+  async function handleArquivoSelecionado(e) {
+    const file = e.target.files[0];
+    e.target.value = ""; // permite selecionar o mesmo arquivo de novo depois
+    if (!file) return;
+    try {
+      const resultado = await lerPlanilhaClientes(file);
+      if (resultado.linhas.length === 0) {
+        mostrarToast("Não encontrei nenhuma linha válida nessa planilha");
+        return;
+      }
+      setPreview(resultado);
+    } catch (err) {
+      mostrarToast(err.message);
+    }
+  }
+
+  async function confirmarImportacao() {
+    if (!preview) return;
+    setImportando(true);
+    setProgresso({ feitos: 0, total: preview.linhas.length });
+    try {
+      await importarClientes(preview.linhas, (feitos, total) => setProgresso({ feitos, total }));
+      mostrarToast(`${preview.linhas.length} clientes importados com sucesso!`);
+      setPreview(null);
+      carregar();
+    } catch (err) {
+      mostrarToast("Erro ao importar: " + err.message);
+    } finally {
+      setImportando(false);
+      setProgresso(null);
     }
   }
 
@@ -133,6 +171,45 @@ export default function BaseDados() {
   return (
     <div>
       {toast && <div className="toast">{toast}</div>}
+
+      <div className="card">
+        <h2 className="card-title">Importar planilha</h2>
+        {!preview ? (
+          <>
+            <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+              Envie um .xlsx com colunas de código, nome, razão social, CNPJ, cidade e UF.
+              Clientes com o mesmo código são atualizados, não duplicados.
+            </p>
+            <label className="btn btn-secondary btn-block" style={{ cursor: "pointer" }}>
+              Escolher arquivo .xlsx
+              <input type="file" accept=".xlsx,.xls" style={{ display: "none" }}
+                onChange={handleArquivoSelecionado} />
+            </label>
+          </>
+        ) : importando ? (
+          <div className="empty-state">
+            Importando... {progresso ? `${progresso.feitos}/${progresso.total}` : ""}
+          </div>
+        ) : (
+          <>
+            <p style={{ fontSize: 14, marginBottom: 10 }}>
+              Encontrei <strong>{preview.linhas.length}</strong> clientes na aba "{preview.aba}". Prévia:
+            </p>
+            {preview.linhas.slice(0, 5).map((c, i) => (
+              <div key={i} style={{ fontSize: 13, color: "var(--ink-soft)", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                {c.codigo} · {c.nome} · {c.cidade || "—"}/{c.estado || "—"}
+              </div>
+            ))}
+            <div className="row" style={{ marginTop: 14 }}>
+              <button className="btn btn-ghost btn-block" onClick={() => setPreview(null)}>Cancelar</button>
+              <button className="btn btn-primary btn-block" onClick={confirmarImportacao}>
+                Importar {preview.linhas.length} clientes
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
       <div className="card">
         <div style={{ display: "flex", gap: 10, marginBottom: 4 }}>
           <input className="input" placeholder="Buscar por nome, código ou CNPJ"

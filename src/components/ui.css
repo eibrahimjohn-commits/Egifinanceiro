@@ -127,3 +127,26 @@
   z-index: 50;
   box-shadow: 0 8px 24px rgba(0,0,0,0.2);
 }
+
+/* Análises: no celular fica empilhado (padrão) — só no computador vira 3 colunas */
+.analises-grid {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 900px) {
+  .analises-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+  .analises-grid > .card {
+    margin-bottom: 0;
+    height: 100%;
+  }
+  .analises-col-scroll {
+    max-height: 480px;
+    overflow-y: auto;
+  }
+}
