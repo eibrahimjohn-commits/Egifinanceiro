@@ -139,16 +139,32 @@ export default function BaseDados() {
     carregar();
   }
 
+  function ultimaCompraDe(c) {
+    const doSistema = ultimoPedidoPorCliente[c.id];
+    const daPlanilha = c.ultimaCompraPlanilha;
+    if (doSistema && daPlanilha) return doSistema > daPlanilha ? doSistema : daPlanilha;
+    return doSistema || daPlanilha || "";
+  }
+
   const pendentesEnriquecimento = clientes.filter(
     (c) => (c.cnpj || "").replace(/\D/g, "").length === 14 && !c.infoExtra?.consultadoEm
   ).length;
 
-  const listaFiltrada = clientes.filter((c) =>
-    !filtro ||
-    c.nome?.toLowerCase().includes(filtro.toLowerCase()) ||
-    c.codigo?.toLowerCase().includes(filtro.toLowerCase()) ||
-    c.cnpjDigits?.includes(filtro.replace(/\D/g, ""))
-  );
+  const listaFiltrada = clientes.filter((c) => {
+    if (!filtro) return true;
+    const termo = filtro.toLowerCase().trim();
+    const digitos = filtro.replace(/\D/g, "");
+    const telefones = [...(c.telefones || []), c.whatsapp || ""].join(" ");
+    return (
+      (c.nome || "").toLowerCase().includes(termo) ||
+      (c.razaoSocial || "").toLowerCase().includes(termo) ||
+      (c.codigo || "").toLowerCase().includes(termo) ||
+      (c.cidade || "").toLowerCase().includes(termo) ||
+      (c.representante || "").toLowerCase().includes(termo) ||
+      (digitos.length >= 3 && (c.cnpjDigits || "").includes(digitos)) ||
+      (digitos.length >= 4 && telefones.includes(digitos))
+    );
+  });
 
   if (editando) {
     const info = editando.infoExtra;
@@ -226,6 +242,39 @@ export default function BaseDados() {
             </div>
           </div>
 
+          <div className="row">
+            <div className="field">
+              <label>Telefone</label>
+              <input className="input" value={(editando.telefones || [])[0] || ""}
+                onChange={(e) => {
+                  const tels = [...(editando.telefones || [])];
+                  tels[0] = e.target.value;
+                  setEditando({ ...editando, telefones: tels });
+                }} />
+            </div>
+            <div className="field">
+              <label>WhatsApp</label>
+              <input className="input" value={editando.whatsapp || ""}
+                onChange={(e) => setEditando({ ...editando, whatsapp: e.target.value })} />
+            </div>
+          </div>
+          <div className="row">
+            <div className="field">
+              <label>Telefone alternativo</label>
+              <input className="input" value={(editando.telefones || [])[1] || ""}
+                onChange={(e) => {
+                  const tels = [...(editando.telefones || [])];
+                  tels[1] = e.target.value;
+                  setEditando({ ...editando, telefones: tels });
+                }} />
+            </div>
+            <div className="field">
+              <label>Pessoa de contato</label>
+              <input className="input" value={editando.contato || ""}
+                onChange={(e) => setEditando({ ...editando, contato: e.target.value })} />
+            </div>
+          </div>
+
           <div className="field">
             <label>Observação</label>
             <textarea className="input" rows={3} value={editando.observacao || ""}
@@ -236,13 +285,16 @@ export default function BaseDados() {
           {editando.id && (
             <div className="field" style={{ background: "var(--bg)", borderRadius: 12, padding: 14 }}>
               <label style={{ marginBottom: 4 }}>Histórico</label>
-              <div style={{ fontSize: 14 }}>
-                Último pedido:{" "}
-                <strong>
-                  {ultimoPedidoPorCliente[editando.id]
-                    ? formatDate(ultimoPedidoPorCliente[editando.id])
-                    : "nenhum pedido registrado"}
-                </strong>
+              <div style={{ fontSize: 14, lineHeight: 1.8 }}>
+                <div>
+                  Última compra:{" "}
+                  <strong>
+                    {ultimaCompraDe(editando) ? formatDate(ultimaCompraDe(editando)) : "sem registro"}
+                  </strong>
+                </div>
+                {editando.mediaCompra > 0 && (
+                  <div>Média de compra: <strong>{formatCurrency(editando.mediaCompra)}</strong></div>
+                )}
               </div>
             </div>
           )}
@@ -252,7 +304,13 @@ export default function BaseDados() {
               <label style={{ marginBottom: 8 }}>Informações públicas (Receita Federal)</label>
               <div style={{ fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.8 }}>
                 {info.situacaoCadastral && <div>Situação cadastral: <strong style={{ color: "var(--ink)" }}>{info.situacaoCadastral}</strong></div>}
-                {info.telefone && <div>Telefone: <strong style={{ color: "var(--ink)" }}>{info.telefone}</strong></div>}
+                {info.telefones?.length > 0
+                  ? info.telefones.map((t, i) => (
+                      <div key={i}>Telefone {i + 1}: <strong style={{ color: "var(--ink)" }}>{t}</strong></div>
+                    ))
+                  : <div>Telefone: <em>não consta na base pública</em></div>}
+                {info.email && <div>E-mail: <strong style={{ color: "var(--ink)" }}>{info.email}</strong></div>}
+                {info.porte && <div>Porte: <strong style={{ color: "var(--ink)" }}>{info.porte}</strong></div>}
                 {info.capitalSocial != null && <div>Capital social: <strong style={{ color: "var(--ink)" }}>{formatCurrency(info.capitalSocial)}</strong></div>}
                 {info.atividadePrincipal && <div>Atividade principal: <strong style={{ color: "var(--ink)" }}>{info.atividadePrincipal}</strong></div>}
                 {info.consultadoEm && <div style={{ marginTop: 6, fontSize: 11 }}>Consultado em {formatDate(info.consultadoEm.slice(0, 10))}</div>}
@@ -314,6 +372,10 @@ export default function BaseDados() {
                 {preview.diagnostico.semCodigo > 0 && (
                   <div>Sem código (serão importados mesmo assim): {preview.diagnostico.semCodigo}</div>
                 )}
+                <div>
+                  Com telefone/WhatsApp: <strong style={{ color: "var(--ink)" }}>{preview.diagnostico.comTelefone}</strong>
+                  {" · "}Com data de última compra: <strong style={{ color: "var(--ink)" }}>{preview.diagnostico.comUltimaCompra}</strong>
+                </div>
                 {preview.diagnostico.zerosRecuperados > 0 && (
                   <div style={{ color: "var(--grape)", fontWeight: 600 }}>
                     {preview.diagnostico.zerosRecuperados} documentos tiveram zeros à esquerda recuperados
@@ -399,7 +461,7 @@ export default function BaseDados() {
         {listaFiltrada.map((c) => {
           const situacao = c.infoExtra?.situacaoCadastral;
           const ativa = situacao?.toUpperCase().includes("ATIVA");
-          const ultimoPedido = ultimoPedidoPorCliente[c.id];
+          const ultimoPedido = ultimaCompraDe(c);
           return (
             <div key={c.id} className="list-item" onClick={() => setEditando(c)}
               style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
@@ -415,11 +477,13 @@ export default function BaseDados() {
               <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
                 Cód {c.codigo} · {c.cidade || "—"}/{c.estado || "—"}
               </div>
-              {c.infoExtra?.telefone && (
-                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>📞 {c.infoExtra.telefone}</div>
+              {(c.telefones?.[0] || c.whatsapp || c.infoExtra?.telefone) && (
+                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                  {c.whatsapp ? `WhatsApp ${c.whatsapp}` : c.telefones?.[0] || c.infoExtra?.telefone}
+                </div>
               )}
               <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                Último pedido: {ultimoPedido ? formatDate(ultimoPedido) : "nenhum registrado"}
+                Última compra: {ultimoPedido ? formatDate(ultimoPedido) : "sem registro"}
               </div>
             </div>
           );

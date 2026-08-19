@@ -104,6 +104,12 @@ export async function importarClientes(linhas, onProgresso) {
           cidade: c.cidade || "",
           estado: c.estado || "",
           representante: c.representante || "",
+          cep: c.cep || "",
+          contato: c.contato || "",
+          telefones: c.telefones || [],
+          whatsapp: c.whatsapp || "",
+          ultimaCompraPlanilha: c.ultimaCompra || "",
+          mediaCompra: c.mediaCompra || 0,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -173,9 +179,16 @@ export async function consultarCnpj(cnpj) {
   if (!resp.ok) throw new Error("CNPJ não encontrado na base pública");
   const data = await resp.json();
 
-  const telefone = data.ddd_telefone_1
-    ? `(${data.ddd_telefone_1.slice(0, 2)}) ${data.ddd_telefone_1.slice(2)}`
-    : "";
+  const montarTelefone = (ddd) => {
+    const d = String(ddd || "").replace(/\D/g, "");
+    if (d.length < 10) return "";
+    return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  };
+
+  const telefones = [
+    montarTelefone(data.ddd_telefone_1),
+    montarTelefone(data.ddd_telefone_2),
+  ].filter(Boolean);
 
   return {
     razaoSocial: data.razao_social || "",
@@ -183,10 +196,14 @@ export async function consultarCnpj(cnpj) {
     cidade: data.municipio || "",
     estado: data.uf || "",
     infoExtra: {
-      telefone,
+      telefone: telefones[0] || "",
+      telefones,
+      email: data.email || "",
       situacaoCadastral: data.descricao_situacao_cadastral || "",
       capitalSocial: data.capital_social ?? null,
+      porte: data.porte || data.descricao_porte || "",
       atividadePrincipal: data.cnae_fiscal_descricao || "",
+      dataAbertura: data.data_inicio_atividade || "",
       consultadoEm: new Date().toISOString(),
     },
   };

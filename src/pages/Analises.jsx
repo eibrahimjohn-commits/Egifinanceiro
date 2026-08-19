@@ -40,7 +40,12 @@ export default function Analises() {
 
   const inativos = clientes.filter((c) => {
     if (temValeAberto.has(c.id)) return false;
-    const ultima = ultimaCompraPorCliente[c.id];
+    // considera tanto pedidos lançados no sistema quanto a data vinda da planilha
+    const doSistema = ultimaCompraPorCliente[c.id];
+    const daPlanilha = c.ultimaCompraPlanilha;
+    const ultima = doSistema && daPlanilha
+      ? (doSistema > daPlanilha ? doSistema : daPlanilha)
+      : (doSistema || daPlanilha);
     if (!ultima) return false; // nunca comprou - não é "parou de comprar"
     const dias = (hoje - new Date(ultima)) / 86400000;
     return dias >= DIAS_INATIVO;
