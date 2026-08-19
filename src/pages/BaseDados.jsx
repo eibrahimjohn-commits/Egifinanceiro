@@ -299,11 +299,32 @@ export default function BaseDados() {
         ) : (
           <>
             <p style={{ fontSize: 14, marginBottom: 10 }}>
-              Encontrei <strong>{preview.linhas.length}</strong> clientes na aba "{preview.aba}". Prévia:
+              Encontrei <strong>{preview.linhas.length}</strong> clientes na aba "{preview.aba}".
             </p>
+            {preview.diagnostico && (
+              <div style={{ background: "var(--bg)", borderRadius: 12, padding: 12, marginBottom: 12, fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.7 }}>
+                <div>Linhas na planilha: <strong style={{ color: "var(--ink)" }}>{preview.diagnostico.totalLinhas}</strong></div>
+                <div>Serão importadas: <strong style={{ color: "var(--ink)" }}>{preview.linhas.length}</strong></div>
+                {preview.diagnostico.ignoradasVazias > 0 && (
+                  <div>Linhas totalmente vazias ignoradas: {preview.diagnostico.ignoradasVazias}</div>
+                )}
+                <div style={{ marginTop: 6 }}>
+                  CNPJ: {preview.diagnostico.cnpj} · CPF: {preview.diagnostico.cpf} · sem documento: {preview.diagnostico.semDocumento}
+                </div>
+                {preview.diagnostico.semCodigo > 0 && (
+                  <div>Sem código (serão importados mesmo assim): {preview.diagnostico.semCodigo}</div>
+                )}
+                {preview.diagnostico.zerosRecuperados > 0 && (
+                  <div style={{ color: "var(--grape)", fontWeight: 600 }}>
+                    {preview.diagnostico.zerosRecuperados} documentos tiveram zeros à esquerda recuperados
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-soft)", marginBottom: 4 }}>Prévia:</div>
             {preview.linhas.slice(0, 5).map((c, i) => (
               <div key={i} style={{ fontSize: 13, color: "var(--ink-soft)", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
-                {c.codigo} · {c.nome} · {c.cidade || "—"}/{c.estado || "—"}
+                {c.codigo || "(sem cód)"} · {c.nome} · {c.cidade || "—"}/{c.estado || "—"}
               </div>
             ))}
             <div className="row" style={{ marginTop: 14 }}>

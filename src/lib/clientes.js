@@ -83,25 +83,27 @@ export async function salvarCliente(dadosCliente, id = null) {
 }
 
 export async function importarClientes(linhas, onProgresso) {
-  // linhas: [{ codigo, nome, razaoSocial, cnpj, cidade, estado }]
+  // linhas: [{ chave, codigo, nome, razaoSocial, cnpj, cidade, estado, representante }]
   const CHUNK = 400;
   let processados = 0;
   for (let i = 0; i < linhas.length; i += CHUNK) {
     const lote = linhas.slice(i, i + CHUNK);
     const batch = writeBatch(db);
     lote.forEach((c) => {
-      const idSeguro = "cod_" + String(c.codigo).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const base = String(c.chave || c.codigo || c.cnpj || "").trim();
+      const idSeguro = "cli_" + (base.replace(/[^a-zA-Z0-9_-]/g, "_") || Math.random().toString(36).slice(2, 12));
       const ref = doc(db, "clientes", idSeguro);
       batch.set(
         ref,
         {
-          codigo: String(c.codigo),
-          nome: c.nome,
+          codigo: String(c.codigo ?? ""),
+          nome: c.nome || "Sem nome",
           razaoSocial: c.razaoSocial || "",
           cnpj: c.cnpj || "",
           cnpjDigits: onlyDigits(c.cnpj || ""),
           cidade: c.cidade || "",
           estado: c.estado || "",
+          representante: c.representante || "",
           updatedAt: serverTimestamp(),
         },
         { merge: true }
