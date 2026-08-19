@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "../components/ui.css";
-import { listarClientes, salvarCliente, consultarCnpj, importarClientes, listarGruposUnicos } from "../lib/clientes";
+import { listarClientes, salvarCliente, consultarCnpj, importarClientes, listarGruposUnicos, enriquecerClientesEmLote } from "../lib/clientes";
+import { listarPedidos } from "../lib/pedidos";
 import { lerPlanilhaClientes } from "../lib/importarPlanilha";
 import { ESTADOS_BR, formatCurrency, formatDate } from "../lib/constants";
 
@@ -16,12 +17,44 @@ export default function BaseDados() {
   const [preview, setPreview] = useState(null); // { linhas, aba }
   const [progresso, setProgresso] = useState(null);
   const [grupos, setGrupos] = useState([]);
+  const [ultimoPedidoPorCliente, setUltimoPedidoPorCliente] = useState({});
+  const [enriquecendo, setEnriquecendo] = useState(false);
+  const [progressoEnriq, setProgressoEnriq] = useState(null);
+  const pararEnriqRef = useRef(false);
 
   async function carregar() {
     setCarregando(true);
-    const lista = await listarClientes();
+    const [lista, pedidos] = await Promise.all([listarClientes(), listarPedidos()]);
     setClientes(lista);
+
+    const mapa = {};
+    pedidos.forEach((ped) => {
+      const atual = mapa[ped.clienteId];
+      if (!atual || new Date(ped.data) > new Date(atual)) mapa[ped.clienteId] = ped.data;
+    });
+    setUltimoPedidoPorCliente(mapa);
+
     setCarregando(false);
+  }
+
+  async function handleEnriquecerTodos() {
+    setEnriquecendo(true);
+    pararEnriqRef.current = false;
+    setProgressoEnriq({ feitos: 0, total: 0, sucesso: 0, falhas: 0 });
+    try {
+      const resultado = await enriquecerClientesEmLote({
+        clientes,
+        onProgresso: setProgressoEnriq,
+        deveParar: () => pararEnriqRef.current,
+      });
+      mostrarToast(`Concluído: ${resultado.sucesso} atualizados, ${resultado.falhas} sem retorno.`);
+      carregar();
+    } catch (err) {
+      mostrarToast("Erro: " + err.message);
+    } finally {
+      setEnriquecendo(false);
+      setProgressoEnriq(null);
+    }
   }
 
   useEffect(() => { carregar(); listarGruposUnicos().then(setGrupos); }, []);
@@ -96,6 +129,10 @@ export default function BaseDados() {
     setEditando(null);
     carregar();
   }
+
+  const pendentesEnriquecimento = clientes.filter(
+    (c) => (c.cnpj || "").replace(/\D/g, "").length === 14 && !c.infoExtra?.consultadoEm
+  ).length;
 
   const listaFiltrada = clientes.filter((c) =>
     !filtro ||
@@ -187,6 +224,20 @@ export default function BaseDados() {
               placeholder="Anotações livres sobre esse cliente..." />
           </div>
 
+          {editando.id && (
+            <div className="field" style={{ background: "var(--bg)", borderRadius: 12, padding: 14 }}>
+              <label style={{ marginBottom: 4 }}>Histórico</label>
+              <div style={{ fontSize: 14 }}>
+                Último pedido:{" "}
+                <strong>
+                  {ultimoPedidoPorCliente[editando.id]
+                    ? formatDate(ultimoPedidoPorCliente[editando.id])
+                    : "nenhum pedido registrado"}
+                </strong>
+              </div>
+            </div>
+          )}
+
           {info && (
             <div className="field" style={{ background: "var(--bg)", borderRadius: 12, padding: 14 }}>
               <label style={{ marginBottom: 8 }}>Informações públicas (Receita Federal)</label>
@@ -257,6 +308,44 @@ export default function BaseDados() {
       </div>
 
       <div className="card">
+        <h2 className="card-title">Buscar dados públicos em lote</h2>
+        {!enriquecendo ? (
+          <>
+            <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+              Consulta o CNPJ de cada cliente na base pública e preenche telefone, situação
+              cadastral e atividade. Roda devagar (~1,5s por cliente) para respeitar o limite
+              da API — pode deixar rodando em segundo plano e parar quando quiser.
+              {" "}<strong>{pendentesEnriquecimento}</strong> clientes ainda sem esses dados.
+            </p>
+            <button className="btn btn-secondary btn-block" onClick={handleEnriquecerTodos}
+              disabled={pendentesEnriquecimento === 0}>
+              Buscar dados públicos dos clientes
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 14, marginBottom: 10 }}>
+              {progressoEnriq
+                ? `${progressoEnriq.feitos} de ${progressoEnriq.total} · ${progressoEnriq.sucesso} atualizados, ${progressoEnriq.falhas} sem retorno`
+                : "Iniciando..."}
+            </div>
+            {progressoEnriq?.total > 0 && (
+              <div style={{ background: "var(--pink-light)", borderRadius: 8, height: 10, marginBottom: 12 }}>
+                <div style={{
+                  width: `${(progressoEnriq.feitos / progressoEnriq.total) * 100}%`,
+                  background: "linear-gradient(90deg, var(--pink), var(--grape))",
+                  height: "100%", borderRadius: 8,
+                }} />
+              </div>
+            )}
+            <button className="btn btn-ghost btn-block" onClick={() => { pararEnriqRef.current = true; }}>
+              Parar
+            </button>
+          </>
+        )}
+      </div>
+
+      <div className="card">
         <div style={{ display: "flex", gap: 10, marginBottom: 4 }}>
           <input className="input" placeholder="Buscar por nome, código ou CNPJ"
             value={filtro} onChange={(e) => setFiltro(e.target.value)} />
@@ -273,17 +362,34 @@ export default function BaseDados() {
         <div className="empty-state">Nenhum cliente cadastrado ainda.</div>
       ) : (
         <div className="clientes-grid">
-        {listaFiltrada.map((c) => (
-          <div key={c.id} className="list-item" onClick={() => setEditando(c)}>
-            <div>
-              <strong>{c.nome}</strong>
+        {listaFiltrada.map((c) => {
+          const situacao = c.infoExtra?.situacaoCadastral;
+          const ativa = situacao?.toUpperCase().includes("ATIVA");
+          const ultimoPedido = ultimoPedidoPorCliente[c.id];
+          return (
+            <div key={c.id} className="list-item" onClick={() => setEditando(c)}
+              style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <strong>{c.nome}</strong>
+                {situacao && (
+                  <span className={"badge " + (ativa ? "badge-pago" : "badge-atraso")}
+                    style={{ flexShrink: 0 }}>
+                    {situacao}
+                  </span>
+                )}
+              </div>
               <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
                 Cód {c.codigo} · {c.cidade || "—"}/{c.estado || "—"}
               </div>
+              {c.infoExtra?.telefone && (
+                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>📞 {c.infoExtra.telefone}</div>
+              )}
+              <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                Último pedido: {ultimoPedido ? formatDate(ultimoPedido) : "nenhum registrado"}
+              </div>
             </div>
-            <span>✎</span>
-          </div>
-        ))}
+          );
+        })}
         </div>
       )}
     </div>

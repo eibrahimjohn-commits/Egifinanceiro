@@ -9,11 +9,13 @@ import {
   STATUS_PROSPECCAO,
 } from "../lib/prospeccao";
 import { listarClientes, salvarCliente } from "../lib/clientes";
+import { ESTADOS_BR } from "../lib/constants";
 
 export default function Prospeccao() {
   const [aba, setAba] = useState("buscar"); // buscar | salvos
 
   const [cidadeNome, setCidadeNome] = useState("");
+  const [uf, setUf] = useState("");
   const [cnae, setCnae] = useState(CNAES_SUGERIDOS[0].codigo);
   const [resultados, setResultados] = useState(null);
   const [buscando, setBuscando] = useState(false);
@@ -46,10 +48,10 @@ export default function Prospeccao() {
     setErroBusca("");
     setResultados(null);
     try {
-      const lista = await buscarEmpresas({ cidadeNome, cnae });
+      const lista = await buscarEmpresas({ cidadeNome, uf, cnae });
       setResultados(lista);
     } catch (err) {
-      setErroBusca(err.message + " (posso ajustar a integração se o formato da resposta for diferente do esperado — me avisa o que apareceu)");
+      setErroBusca(err.message);
     } finally {
       setBuscando(false);
     }
@@ -110,6 +112,15 @@ export default function Prospeccao() {
                 <input className="input" value={cidadeNome} onChange={(e) => setCidadeNome(e.target.value)}
                   placeholder="Ex: Uberlândia" required />
               </div>
+              <div className="field" style={{ flex: "0 0 110px" }}>
+                <label>Estado</label>
+                <select className="input" value={uf} onChange={(e) => setUf(e.target.value)}>
+                  <option value="">--</option>
+                  {ESTADOS_BR.map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="row">
               <div className="field">
                 <label>Ramo de atividade (CNAE)</label>
                 <select className="input" value={cnae} onChange={(e) => setCnae(e.target.value)}>

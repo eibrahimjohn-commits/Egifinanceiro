@@ -13,47 +13,39 @@ import { onlyDigits } from "./clientes";
 
 const prospeccoesRef = collection(db, "prospeccoes");
 
-// CNAEs comuns pro ramo da EGI (bijuterias, cosméticos, armarinho, presentes).
-// O campo aceita digitar outro código também.
+// CNAEs do varejo que compra bijuteria/cosmético/acessório no atacado.
 export const CNAES_SUGERIDOS = [
-  { codigo: "4772500", label: "4772-5/00 · Perfumaria e cosméticos" },
-  { codigo: "4789005", label: "4789-0/05 · Bijuterias e artesanato" },
-  { codigo: "4783101", label: "4783-1/01 · Artigos de joalheria" },
-  { codigo: "4783102", label: "4783-1/02 · Artigos de bijuteria e relógios" },
-  { codigo: "4755502", label: "4755-5/02 · Armarinho" },
-  { codigo: "4761003", label: "4761-0/03 · Papelaria" },
-  { codigo: "4772500", label: "4772-5/00 · Cosméticos, perfumaria e higiene" },
+  { codigo: "4789005", label: "Bijuterias e artesanato (4789-0/05)" },
+  { codigo: "4783102", label: "Bijuterias e relógios (4783-1/02)" },
+  { codigo: "4772500", label: "Cosméticos e perfumaria (4772-5/00)" },
+  { codigo: "4781400", label: "Vestuário e acessórios (4781-4/00)" },
+  { codigo: "4755502", label: "Armarinho (4755-5/02)" },
+  { codigo: "4783101", label: "Joalheria (4783-1/01)" },
+  { codigo: "4761003", label: "Papelaria (4761-0/03)" },
+  { codigo: "9602501", label: "Salão de beleza (9602-5/01)" },
+  { codigo: "", label: "Todos os ramos" },
 ];
 
-// Busca empresas na API pública Base Empresarial (dados abertos da Receita Federal).
-// Sem chave, sem cadastro. Como não consegui testar o formato exato de resposta,
-// essa função tenta reconhecer variações comuns de nomes de campo.
-export async function buscarEmpresas({ cidadeNome, cnae }) {
+// Busca empresas através do nosso proxy serverless (/api/buscar-empresas).
+// O proxy roda no servidor da Vercel, o que evita o bloqueio de CORS do navegador.
+export async function buscarEmpresas({ cidadeNome, uf, cnae, pagina = 1 }) {
   const params = new URLSearchParams();
-  if (cnae) params.append("cnaes[]", cnae);
-  params.append("per_page", "50");
-  if (cidadeNome) params.append("city", cidadeNome);
+  if (cidadeNome) params.append("cidade", cidadeNome);
+  if (uf) params.append("uf", uf);
+  if (cnae) params.append("cnae", cnae);
+  params.append("pagina", String(pagina));
 
-  const url = `https://app.baseempresarial.com.br/api/v1/establishments?${params.toString()}`;
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    throw new Error(`A busca falhou (${resp.status}). Tente novamente ou ajuste os filtros.`);
-  }
+  const resp = await fetch(`/api/buscar-empresas?${params.toString()}`);
   const data = await resp.json();
 
-  const bruto = data.data || data.results || data.items || (Array.isArray(data) ? data : []);
+  if (!resp.ok) {
+    const detalhe = data?.tentativas
+      ? " Detalhe técnico: " + JSON.stringify(data.tentativas).slice(0, 400)
+      : "";
+    throw new Error((data?.erro || `Falha na busca (${resp.status}).`) + detalhe);
+  }
 
-  return bruto.map((e) => ({
-    cnpj: e.cnpj || e.cnpj_completo || "",
-    razaoSocial: e.razao_social || e.razaoSocial || e.nome || "",
-    nomeFantasia: e.nome_fantasia || e.nomeFantasia || "",
-    cidade: e.municipio || e.city || e.cidade || cidadeNome || "",
-    estado: e.uf || e.estado || "",
-    cnae: e.cnae_principal?.codigo || e.cnae || cnae || "",
-    telefone: e.telefone || e.ddd_telefone_1 || "",
-    situacaoCadastral: e.situacao_cadastral || e.descricao_situacao_cadastral || "",
-    _bruto: e,
-  }));
+  return data.empresas || [];
 }
 
 export async function listarProspeccoes() {

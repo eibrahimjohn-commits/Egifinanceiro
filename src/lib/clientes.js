@@ -108,6 +108,43 @@ export async function importarClientes(linhas, onProgresso) {
   }
   return processados;
 }
+// Enriquece em lote os clientes que têm CNPJ mas ainda não têm dados públicos.
+// Vai devagar de propósito (a API pública tem limite por minuto) e pode ser parado.
+export async function enriquecerClientesEmLote({ clientes, onProgresso, deveParar }) {
+  const pendentes = clientes.filter(
+    (c) => onlyDigits(c.cnpj || "").length === 14 && !c.infoExtra?.consultadoEm
+  );
+
+  let sucesso = 0;
+  let falhas = 0;
+
+  for (let i = 0; i < pendentes.length; i++) {
+    if (deveParar && deveParar()) break;
+
+    const cliente = pendentes[i];
+    try {
+      const dados = await consultarCnpj(cliente.cnpj);
+      await updateDoc(doc(db, "clientes", cliente.id), {
+        infoExtra: dados.infoExtra,
+        razaoSocial: cliente.razaoSocial || dados.razaoSocial || "",
+        cidade: cliente.cidade || dados.cidade || "",
+        estado: cliente.estado || dados.estado || "",
+        updatedAt: serverTimestamp(),
+      });
+      sucesso++;
+    } catch {
+      falhas++;
+    }
+
+    if (onProgresso) onProgresso({ feitos: i + 1, total: pendentes.length, sucesso, falhas });
+
+    // pausa de ~1,5s entre consultas para respeitar o limite da API pública
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+
+  return { sucesso, falhas, totalPendentes: pendentes.length };
+}
+
 export async function listarGruposUnicos() {
   const snap = await getDocs(clientesRef);
   const grupos = new Set();
