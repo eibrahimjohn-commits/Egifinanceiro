@@ -158,6 +158,71 @@ export async function enriquecerClientesEmLote({ clientes, onProgresso, devePara
   return { sucesso, falhas, totalPendentes: pendentes.length };
 }
 
+// --- Limpeza de duplicados ---------------------------------------------
+// Agrupa clientes pela mesma identidade (código, senão CNPJ, senão nome) e
+// aponta qual manter. Mantém o registro mais completo (mais campos preenchidos).
+
+function pontuarCompletude(c) {
+  let p = 0;
+  if (c.ultimaCompraPlanilha) p += 3;
+  if (c.telefones?.length) p += 2;
+  if (c.whatsapp) p += 2;
+  if (c.mediaCompra) p += 1;
+  if (c.infoExtra?.consultadoEm) p += 2;
+  if (c.cnpjDigits) p += 1;
+  if (c.razaoSocial) p += 1;
+  if (c.cidade) p += 1;
+  if (c.representante) p += 1;
+  if (c.grupo) p += 1;
+  if (c.observacao) p += 1;
+  return p;
+}
+
+export function analisarDuplicados(clientes) {
+  const grupos = new Map();
+  clientes.forEach((c) => {
+    const chave =
+      (c.codigo || "").trim() ||
+      (c.cnpjDigits || "").trim() ||
+      (c.nome || "").trim().toLowerCase();
+    if (!chave) return;
+    if (!grupos.has(chave)) grupos.set(chave, []);
+    grupos.get(chave).push(c);
+  });
+
+  const paraRemover = [];
+  let gruposComDuplicata = 0;
+
+  grupos.forEach((lista) => {
+    if (lista.length < 2) return;
+    gruposComDuplicata++;
+    const ordenados = [...lista].sort((a, b) => pontuarCompletude(b) - pontuarCompletude(a));
+    // mantém o primeiro (mais completo), remove os demais
+    ordenados.slice(1).forEach((c) => paraRemover.push(c));
+  });
+
+  return {
+    totalAtual: clientes.length,
+    gruposComDuplicata,
+    paraRemover,
+    totalDepois: clientes.length - paraRemover.length,
+  };
+}
+
+export async function removerDuplicados(paraRemover, onProgresso) {
+  const CHUNK = 400;
+  let removidos = 0;
+  for (let i = 0; i < paraRemover.length; i += CHUNK) {
+    const lote = paraRemover.slice(i, i + CHUNK);
+    const batch = writeBatch(db);
+    lote.forEach((c) => batch.delete(doc(db, "clientes", c.id)));
+    await batch.commit();
+    removidos += lote.length;
+    if (onProgresso) onProgresso(removidos, paraRemover.length);
+  }
+  return removidos;
+}
+
 export async function listarGruposUnicos() {
   const snap = await getDocs(clientesRef);
   const grupos = new Set();

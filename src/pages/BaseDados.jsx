@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import "../components/ui.css";
-import { listarClientes, salvarCliente, consultarCnpj, importarClientes, listarGruposUnicos, enriquecerClientesEmLote } from "../lib/clientes";
+import { listarClientes, salvarCliente, consultarCnpj, importarClientes, listarGruposUnicos, enriquecerClientesEmLote, analisarDuplicados, removerDuplicados } from "../lib/clientes";
 import { listarPedidos } from "../lib/pedidos";
 import { lerPlanilhaClientes } from "../lib/importarPlanilha";
 import { ESTADOS_BR, formatCurrency, formatDate } from "../lib/constants";
@@ -21,6 +21,8 @@ export default function BaseDados() {
   const [enriquecendo, setEnriquecendo] = useState(false);
   const [progressoEnriq, setProgressoEnriq] = useState(null);
   const pararEnriqRef = useRef(false);
+  const [analiseDup, setAnaliseDup] = useState(null);
+  const [removendoDup, setRemovendoDup] = useState(false);
 
   async function carregar() {
     setCarregando(true);
@@ -35,6 +37,29 @@ export default function BaseDados() {
     setUltimoPedidoPorCliente(mapa);
 
     setCarregando(false);
+  }
+
+  function handleAnalisarDuplicados() {
+    const resultado = analisarDuplicados(clientes);
+    setAnaliseDup(resultado);
+    if (resultado.paraRemover.length === 0) {
+      mostrarToast("Nenhum cadastro duplicado encontrado.");
+    }
+  }
+
+  async function handleRemoverDuplicados() {
+    if (!analiseDup) return;
+    setRemovendoDup(true);
+    try {
+      const n = await removerDuplicados(analiseDup.paraRemover);
+      mostrarToast(`${n} cadastros duplicados removidos.`);
+      setAnaliseDup(null);
+      await carregar();
+    } catch (err) {
+      mostrarToast("Erro ao remover: " + err.message);
+    } finally {
+      setRemovendoDup(false);
+    }
   }
 
   async function handleEnriquecerTodos() {
@@ -394,6 +419,52 @@ export default function BaseDados() {
               <button className="btn btn-primary btn-block" onClick={confirmarImportacao}>
                 Importar {preview.linhas.length} clientes
               </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="card">
+        <h2 className="card-title">Limpar cadastros duplicados</h2>
+        {!analiseDup ? (
+          <>
+            <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+              Procura clientes repetidos (mesmo código, CNPJ ou nome) e mantém sempre o
+              cadastro mais completo. Nada é apagado sem você confirmar.
+            </p>
+            <button className="btn btn-secondary btn-block" onClick={handleAnalisarDuplicados}>
+              Procurar duplicados
+            </button>
+          </>
+        ) : removendoDup ? (
+          <div className="empty-state">Removendo duplicados...</div>
+        ) : (
+          <>
+            <div style={{ background: "var(--bg)", borderRadius: 12, padding: 12, marginBottom: 12, fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.8 }}>
+              <div>Cadastros hoje: <strong style={{ color: "var(--ink)" }}>{analiseDup.totalAtual}</strong></div>
+              <div>Clientes com cópias: <strong style={{ color: "var(--ink)" }}>{analiseDup.gruposComDuplicata}</strong></div>
+              <div style={{ color: "var(--red)" }}>Serão removidos: <strong>{analiseDup.paraRemover.length}</strong></div>
+              <div>Ficará com: <strong style={{ color: "var(--green)" }}>{analiseDup.totalDepois}</strong> clientes</div>
+            </div>
+            {analiseDup.paraRemover.length > 0 && (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-soft)", marginBottom: 4 }}>
+                  Exemplos do que será removido:
+                </div>
+                {analiseDup.paraRemover.slice(0, 5).map((c) => (
+                  <div key={c.id} style={{ fontSize: 12, color: "var(--ink-soft)", padding: "3px 0" }}>
+                    {c.codigo || "(sem cód)"} · {c.nome}
+                  </div>
+                ))}
+              </>
+            )}
+            <div className="row" style={{ marginTop: 14 }}>
+              <button className="btn btn-ghost btn-block" onClick={() => setAnaliseDup(null)}>Cancelar</button>
+              {analiseDup.paraRemover.length > 0 && (
+                <button className="btn btn-primary btn-block" onClick={handleRemoverDuplicados}>
+                  Remover {analiseDup.paraRemover.length}
+                </button>
+              )}
             </div>
           </>
         )}
