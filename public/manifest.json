@@ -1,0 +1,14 @@
+{
+  "name": "EGI Distribuidora — Vitrine",
+  "short_name": "EGI",
+  "description": "Vitrine de vendas por atacado da EGI Distribuidora",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F4EEE6",
+  "theme_color": "#3D1526",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
