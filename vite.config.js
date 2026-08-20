@@ -1,27 +1,27 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import { VitePWA } from 'vite-plugin-pwa'
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { resolve } from "path";
 
 export default defineConfig({
-  plugins: [
-    react(),
-    VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
-      manifest: {
-        name: 'EGI Financeiro',
-        short_name: 'EGI Financeiro',
-        description: 'Gestão financeira da EGI Distribuidora',
-        theme_color: '#ff4d8d',
-        background_color: '#fbf9fd',
-        display: 'standalone',
-        start_url: '/',
-        icons: [
-          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-        ],
+  plugins: [react()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "index.html"),
+        admin: resolve(__dirname, "admin/index.html"),
       },
-    }),
-  ],
-})
+      output: {
+        // Separa bibliotecas de terceiros em arquivos próprios. Isso não
+        // reduz o tamanho total baixado na primeira visita, mas faz o
+        // navegador guardar esses arquivos em cache separadamente — nas
+        // próximas visitas (ou depois de uma atualização do site), só o
+        // pouco que realmente mudou precisa ser baixado de novo.
+        manualChunks: {
+          "vendor-react": ["react", "react-dom"],
+          "vendor-firebase": ["firebase/app", "firebase/auth", "firebase/firestore"],
+          "vendor-icons": ["lucide-react"],
+        },
+      },
+    },
+  },
+});
