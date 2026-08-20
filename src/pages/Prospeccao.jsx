@@ -20,6 +20,7 @@ export default function Prospeccao() {
   const [resultados, setResultados] = useState(null);
   const [buscando, setBuscando] = useState(false);
   const [erroBusca, setErroBusca] = useState("");
+  const [municipioResolvido, setMunicipioResolvido] = useState(null);
 
   const [cnpjsClientes, setCnpjsClientes] = useState(new Set());
   const [prospeccoes, setProspeccoes] = useState([]);
@@ -47,9 +48,11 @@ export default function Prospeccao() {
     setBuscando(true);
     setErroBusca("");
     setResultados(null);
+    setMunicipioResolvido(null);
     try {
-      const lista = await buscarEmpresas({ cidadeNome, uf, cnae });
-      setResultados(lista);
+      const { empresas, municipioResolvido } = await buscarEmpresas({ cidadeNome, uf, cnae });
+      setResultados(empresas);
+      setMunicipioResolvido(municipioResolvido);
     } catch (err) {
       setErroBusca(err.message);
     } finally {
@@ -139,9 +142,17 @@ export default function Prospeccao() {
 
           {resultados && (
             resultados.length === 0 ? (
-              <div className="empty-state">Nenhuma empresa encontrada com esses filtros.</div>
+              <div className="empty-state">
+                Nenhuma empresa encontrada{municipioResolvido ? ` em ${municipioResolvido.nome}` : ""} com esses filtros.
+              </div>
             ) : (
-              <div className="clientes-grid">
+              <>
+                {municipioResolvido && (
+                  <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 8 }}>
+                    Buscando em: <strong>{municipioResolvido.nome}</strong> (IBGE {municipioResolvido.id})
+                  </div>
+                )}
+                <div className="clientes-grid">
                 {resultados.map((emp, i) => {
                   const jaCliente = cnpjsClientes.has(emp.cnpj?.replace(/\D/g, ""));
                   return (
@@ -161,7 +172,8 @@ export default function Prospeccao() {
                     </div>
                   );
                 })}
-              </div>
+                </div>
+              </>
             )
           )}
         </>

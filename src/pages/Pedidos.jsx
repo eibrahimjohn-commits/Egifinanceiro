@@ -266,7 +266,8 @@ export default function Pedidos() {
             <label>Código</label>
             <input className="input" value={cliente.codigo}
               onChange={(e) => atualizarCliente("codigo", e.target.value)}
-              onBlur={() => handleBlurCampo("codigo")} />
+              onBlur={() => handleBlurCampo("codigo")}
+              onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleBlurCampo("codigo"))} />
           </div>
           <div className="field" style={{ position: "relative" }}>
             <label>Nome do cliente</label>
@@ -298,14 +299,16 @@ export default function Pedidos() {
             <label>Razão social</label>
             <input className="input" value={cliente.razaoSocial}
               onChange={(e) => atualizarCliente("razaoSocial", e.target.value)}
-              onBlur={() => handleBlurCampo("razaoSocial")} />
+              onBlur={() => handleBlurCampo("razaoSocial")}
+              onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleBlurCampo("razaoSocial"))} />
           </div>
           <div className="field">
             <label>CNPJ</label>
             <div style={{ display: "flex", gap: 8 }}>
               <input className="input" value={cliente.cnpj}
                 onChange={(e) => atualizarCliente("cnpj", e.target.value)}
-                onBlur={() => handleBlurCampo("cnpj")} />
+                onBlur={() => handleBlurCampo("cnpj")}
+                onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleBlurCampo("cnpj"))} />
               <button type="button" className="btn btn-secondary" onClick={handleConsultarCnpj} disabled={buscandoCnpj}>
                 {buscandoCnpj ? "..." : "CNPJ"}
               </button>
