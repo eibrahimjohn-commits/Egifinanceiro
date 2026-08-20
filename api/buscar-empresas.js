@@ -85,8 +85,8 @@ export default async function handler(req, res) {
   }
 
   const params = new URLSearchParams();
-  params.append("city_ibge_code", String(municipio.id));
-  if (cnae) params.append("cnaes[]", cnae);
+  params.append("filter[city_ibge_code]", String(municipio.id));
+  if (cnae) params.append("filter[cnae]", cnae);
   params.append("per_page", "50");
   params.append("page", String(pagina || 1));
 

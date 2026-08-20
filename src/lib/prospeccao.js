@@ -39,7 +39,11 @@ export async function buscarEmpresas({ cidadeNome, uf, cnae, pagina = 1 }) {
   const data = await resp.json();
 
   if (!resp.ok) {
-    throw new Error(data?.erro || `Falha na busca (${resp.status}).`);
+    let msg = data?.erro || `Falha na busca (${resp.status}).`;
+    if (data?.detalhe?.errors) {
+      msg += " | " + JSON.stringify(data.detalhe.errors);
+    }
+    throw new Error(msg);
   }
 
   return { empresas: data.empresas || [], municipioResolvido: data.municipioResolvido };

@@ -13,6 +13,7 @@ export default function BaseDados() {
   const [filtro, setFiltro] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("");
   const [ordenacao, setOrdenacao] = useState("nome_asc");
+  const [somenteAtivos, setSomenteAtivos] = useState(false);
   const [buscandoCnpj, setBuscandoCnpj] = useState(false);
 
   const [importando, setImportando] = useState(false);
@@ -185,9 +186,16 @@ export default function BaseDados() {
     return c.createdAt?.seconds ? c.createdAt.seconds * 1000 : (c.updatedAt?.seconds ? c.updatedAt.seconds * 1000 : 0);
   }
 
+  function clienteEstaAtivo(c) {
+    return (c.infoExtra?.situacaoCadastral || "").toUpperCase().includes("ATIVA");
+  }
+
+  const clientesComSituacao = clientes.filter((c) => c.infoExtra?.situacaoCadastral).length;
+
   const listaFiltrada = clientes
     .filter((c) => {
       if (filtroEstado && (c.estado || "").toUpperCase() !== filtroEstado) return false;
+      if (somenteAtivos && !clienteEstaAtivo(c)) return false;
       if (!filtro) return true;
       const termo = filtro.toLowerCase().trim();
       const digitos = filtro.replace(/\D/g, "");
@@ -561,6 +569,10 @@ export default function BaseDados() {
               <option value="ultimaCompra_asc">Última compra (antiga)</option>
             </select>
           </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 0, fontSize: 13, whiteSpace: "nowrap", cursor: "pointer" }}>
+            <input type="checkbox" checked={somenteAtivos} onChange={(e) => setSomenteAtivos(e.target.checked)} />
+            Só CNPJ ativo
+          </label>
           <button className="btn btn-primary" style={{ whiteSpace: "nowrap" }}
             onClick={() => setEditando({ codigo: "", nome: "" })}>
             + Novo
@@ -568,8 +580,14 @@ export default function BaseDados() {
         </div>
         <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
           <strong>{clientes.length}</strong> clientes na base
-          {(filtro || filtroEstado) && ` · ${listaFiltrada.length} correspondem ao filtro`}
+          {(filtro || filtroEstado || somenteAtivos) && ` · ${listaFiltrada.length} correspondem ao filtro`}
         </div>
+        {somenteAtivos && (
+          <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
+            Esse filtro só enxerga clientes que já tiveram a situação cadastral consultada
+            (card "Dados públicos em lote" acima). {clientesComSituacao} de {clientes.length} já foram consultados.
+          </div>
+        )}
       </div>
 
       {carregando ? (

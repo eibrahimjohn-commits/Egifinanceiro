@@ -40,6 +40,10 @@ export default function Analises() {
 
   const inativos = clientes.filter((c) => {
     if (temValeAberto.has(c.id)) return false;
+    // se já sabemos que o CNPJ não está ativo (baixado/suspenso), não faz sentido
+    // sinalizar como "parou de comprar" — a empresa nem existe mais oficialmente
+    const situacao = (c.infoExtra?.situacaoCadastral || "").toUpperCase();
+    if (situacao && !situacao.includes("ATIVA")) return false;
     // considera tanto pedidos lançados no sistema quanto a data vinda da planilha
     const doSistema = ultimaCompraPorCliente[c.id];
     const daPlanilha = c.ultimaCompraPlanilha;
