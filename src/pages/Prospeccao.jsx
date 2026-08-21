@@ -1,15 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "../components/ui.css";
 import {
   buscarEmpresas,
   listarProspeccoes,
   salvarProspeccao,
   atualizarProspeccao,
+  completarComBrasilApi,
   CNAES_SUGERIDOS,
   STATUS_PROSPECCAO,
 } from "../lib/prospeccao";
 import { listarClientes, salvarCliente } from "../lib/clientes";
-import { ESTADOS_BR } from "../lib/constants";
+import { ESTADOS_BR, formatCurrency } from "../lib/constants";
 
 export default function Prospeccao() {
   const [aba, setAba] = useState("buscar"); // buscar | salvos
@@ -26,6 +27,9 @@ export default function Prospeccao() {
   const [proximaPagina, setProximaPagina] = useState(1);
   const [buscandoMais, setBuscandoMais] = useState(false);
   const [cnpjsAcumulados, setCnpjsAcumulados] = useState(new Set());
+  const [completando, setCompletando] = useState(false);
+  const [progressoCompletar, setProgressoCompletar] = useState(null);
+  const pararCompletarRef = useRef(false);
 
   const [cnpjsClientes, setCnpjsClientes] = useState(new Set());
   const [prospeccoes, setProspeccoes] = useState([]);
@@ -88,6 +92,25 @@ export default function Prospeccao() {
     } finally {
       setBuscandoMais(false);
     }
+  }
+
+  async function handleCompletarDados() {
+    setCompletando(true);
+    pararCompletarRef.current = false;
+    setProgressoCompletar({ feitos: 0, total: resultados.length });
+    await completarComBrasilApi(resultados, {
+      onItem: (index, empresaAtualizada) => {
+        setResultados((atual) => {
+          const copia = [...atual];
+          copia[index] = empresaAtualizada;
+          return copia;
+        });
+        setProgressoCompletar((p) => ({ feitos: (p?.feitos || 0) + 1, total: resultados.length }));
+      },
+      deveParar: () => pararCompletarRef.current,
+    });
+    setCompletando(false);
+    setProgressoCompletar(null);
   }
 
   async function handleAdicionar(empresa) {
@@ -200,23 +223,54 @@ export default function Prospeccao() {
                     {totalVarrido >= 600 && " (pode haver mais — a cidade tem muitas empresas cadastradas)"}
                   </div>
                 )}
+
+                {!completando ? (
+                  <button className="btn btn-secondary btn-block" onClick={handleCompletarDados} style={{ marginBottom: 12 }}>
+                    Completar razão social, capital social e telefone
+                  </button>
+                ) : (
+                  <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+                    <div style={{ fontSize: 13, marginBottom: 8 }}>
+                      Completando dados... {progressoCompletar ? `${progressoCompletar.feitos}/${progressoCompletar.total}` : ""}
+                    </div>
+                    <button className="btn btn-ghost" style={{ fontSize: 13, padding: "6px 12px" }}
+                      onClick={() => { pararCompletarRef.current = true; }}>
+                      Parar
+                    </button>
+                  </div>
+                )}
+
                 <div className="clientes-grid">
                 {resultados.map((emp, i) => {
                   const jaCliente = cnpjsClientes.has(emp.cnpj?.replace(/\D/g, ""));
+                  const ativa = (emp.situacaoCadastral || "").toUpperCase().includes("ATIVA");
                   return (
-                    <div key={i} className="list-item" style={{ cursor: "default" }}>
-                      <div>
+                    <div key={i} className="list-item" style={{ cursor: "default", flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                         <strong>{emp.nomeFantasia || emp.razaoSocial || "(sem nome)"}</strong>
-                        <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                          {emp.cnpj} · {emp.cidade}/{emp.estado}
-                        </div>
-                        {emp.telefone && <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>{emp.telefone}</div>}
+                        {emp.situacaoCadastral && (
+                          <span className={"badge " + (ativa ? "badge-pago" : "badge-atraso")} style={{ flexShrink: 0 }}>
+                            {emp.situacaoCadastral}
+                          </span>
+                        )}
                       </div>
-                      {jaCliente ? (
-                        <span className="badge badge-pago">Já é cliente</span>
-                      ) : (
-                        <button className="btn btn-secondary" onClick={() => handleAdicionar(emp)}>+ Adicionar</button>
+                      {emp.razaoSocial && emp.razaoSocial !== emp.nomeFantasia && (
+                        <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>{emp.razaoSocial}</div>
                       )}
+                      <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                        {emp.cnpj} · {emp.cidade}/{emp.estado}
+                      </div>
+                      {emp.telefone && <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>📞 {emp.telefone}</div>}
+                      {emp.capitalSocial != null && (
+                        <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Capital social: {formatCurrency(emp.capitalSocial)}</div>
+                      )}
+                      <div style={{ marginTop: 4 }}>
+                        {jaCliente ? (
+                          <span className="badge badge-pago">Já é cliente</span>
+                        ) : (
+                          <button className="btn btn-secondary" onClick={() => handleAdicionar(emp)}>+ Adicionar</button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

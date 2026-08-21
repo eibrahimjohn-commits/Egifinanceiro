@@ -9,7 +9,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { onlyDigits } from "./clientes";
+import { onlyDigits, consultarCnpj } from "./clientes";
 
 const prospeccoesRef = collection(db, "prospeccoes");
 
@@ -55,6 +55,35 @@ export async function buscarEmpresas({ cidadeNome, uf, cnae, pagina = 1 }) {
     proximaPagina: data.proximaPagina,
     amostraDebug: data.amostraDebug,
   };
+}
+
+// A Base Empresarial só traz nome fantasia e situação cadastral. Completa razão social,
+// capital social e telefone (quando faltando) consultando a BrasilAPI, uma empresa por vez
+// (respeitando o limite da API pública). onItem(index, empresaAtualizada) é chamado a cada
+// consulta concluída, pra atualizar a tela aos poucos.
+export async function completarComBrasilApi(empresas, { onItem, deveParar } = {}) {
+  for (let i = 0; i < empresas.length; i++) {
+    if (deveParar && deveParar()) break;
+    const emp = empresas[i];
+    if (emp.razaoSocial && emp.capitalSocial != null) continue;
+
+    try {
+      const dados = await consultarCnpj(emp.cnpj);
+      const atualizada = {
+        ...emp,
+        razaoSocial: dados.razaoSocial || emp.razaoSocial,
+        nomeFantasia: emp.nomeFantasia || dados.nomeFantasia,
+        capitalSocial: dados.infoExtra?.capitalSocial ?? null,
+        telefone: emp.telefone || dados.infoExtra?.telefone || "",
+        situacaoCadastral: emp.situacaoCadastral || dados.infoExtra?.situacaoCadastral || "",
+      };
+      onItem?.(i, atualizada);
+    } catch {
+      onItem?.(i, emp); // mantém como estava, só avança o progresso
+    }
+
+    await new Promise((r) => setTimeout(r, 1500));
+  }
 }
 
 export async function listarProspeccoes() {
