@@ -92,7 +92,7 @@ export default async function handler(req, res) {
   function montarUrl(pagina) {
     const params = new URLSearchParams();
     params.append("filter[city_ibge_code]", String(municipio.id));
-    params.append("sort", "-full_cnpj");
+    params.append("sort", "-activity_start_date");
     params.append("per_page", String(PER_PAGE));
     params.append("page", String(pagina));
     return `https://app.baseempresarial.com.br/api/v1/establishments?${params.toString()}`;
