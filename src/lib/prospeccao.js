@@ -48,7 +48,13 @@ export async function buscarEmpresas({ cidadeNome, uf, cnae, pagina = 1 }) {
     throw new Error(msg);
   }
 
-  return { empresas: data.empresas || [], municipioResolvido: data.municipioResolvido, totalVarrido: data.totalVarrido, amostraDebug: data.amostraDebug };
+  return {
+    empresas: data.empresas || [],
+    municipioResolvido: data.municipioResolvido,
+    totalVarrido: data.totalVarrido,
+    proximaPagina: data.proximaPagina,
+    amostraDebug: data.amostraDebug,
+  };
 }
 
 export async function listarProspeccoes() {

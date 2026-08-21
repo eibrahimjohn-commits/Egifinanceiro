@@ -89,6 +89,8 @@ export default async function handler(req, res) {
   const PAGINAS_PARALELAS = 6;
   const PER_PAGE = 100;
 
+  const paginaInicial = Math.max(1, parseInt(pagina, 10) || 1);
+
   function montarUrl(pagina) {
     const params = new URLSearchParams();
     params.append("filter[city_ibge_code]", String(municipio.id));
@@ -103,7 +105,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const paginas = Array.from({ length: PAGINAS_PARALELAS }, (_, i) => i + 1);
+    const paginas = Array.from({ length: PAGINAS_PARALELAS }, (_, i) => paginaInicial + i);
     const respostas = await Promise.allSettled(
       paginas.map(async (p) => {
         const r = await fetch(montarUrl(p), { headers: { Accept: "application/json" } });
@@ -146,6 +148,7 @@ export default async function handler(req, res) {
       total: empresas.length,
       municipioResolvido: { id: municipio.id, nome: municipio.nome },
       totalVarrido: brutos.length,
+      proximaPagina: paginaInicial + PAGINAS_PARALELAS,
       empresas,
       ...(empresas.length === 0 && brutos.length > 0
         ? {

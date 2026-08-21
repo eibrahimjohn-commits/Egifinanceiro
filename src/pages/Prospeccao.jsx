@@ -23,6 +23,9 @@ export default function Prospeccao() {
   const [municipioResolvido, setMunicipioResolvido] = useState(null);
   const [totalVarrido, setTotalVarrido] = useState(0);
   const [amostraDebug, setAmostraDebug] = useState(null);
+  const [proximaPagina, setProximaPagina] = useState(1);
+  const [buscandoMais, setBuscandoMais] = useState(false);
+  const [cnpjsAcumulados, setCnpjsAcumulados] = useState(new Set());
 
   const [cnpjsClientes, setCnpjsClientes] = useState(new Set());
   const [prospeccoes, setProspeccoes] = useState([]);
@@ -51,16 +54,39 @@ export default function Prospeccao() {
     setErroBusca("");
     setResultados(null);
     setMunicipioResolvido(null);
+    setTotalVarrido(0);
     try {
-      const { empresas, municipioResolvido, totalVarrido, amostraDebug } = await buscarEmpresas({ cidadeNome, uf, cnae });
+      const { empresas, municipioResolvido, totalVarrido, amostraDebug, proximaPagina } =
+        await buscarEmpresas({ cidadeNome, uf, cnae, pagina: 1 });
       setResultados(empresas);
+      setCnpjsAcumulados(new Set(empresas.map((e) => e.cnpj)));
       setMunicipioResolvido(municipioResolvido);
       setTotalVarrido(totalVarrido || 0);
       setAmostraDebug(amostraDebug || null);
+      setProximaPagina(proximaPagina || 7);
     } catch (err) {
       setErroBusca(err.message);
     } finally {
       setBuscando(false);
+    }
+  }
+
+  async function handleBuscarMais() {
+    setBuscandoMais(true);
+    setErroBusca("");
+    try {
+      const { empresas, totalVarrido, proximaPagina: prox } =
+        await buscarEmpresas({ cidadeNome, uf, cnae, pagina: proximaPagina });
+      const novas = empresas.filter((e) => !cnpjsAcumulados.has(e.cnpj));
+      setResultados((atual) => [...(atual || []), ...novas]);
+      setCnpjsAcumulados((atual) => new Set([...atual, ...novas.map((e) => e.cnpj)]));
+      setTotalVarrido((atual) => atual + (totalVarrido || 0));
+      setProximaPagina(prox || proximaPagina + 6);
+      if (novas.length === 0) mostrarToast("Nenhuma empresa nova nesse próximo lote — tenta buscar mais uma vez");
+    } catch (err) {
+      setErroBusca(err.message);
+    } finally {
+      setBuscandoMais(false);
     }
   }
 
@@ -149,8 +175,11 @@ export default function Prospeccao() {
               <>
                 <div className="empty-state">
                   Nenhuma empresa desse ramo encontrada nas {totalVarrido} empresas verificadas
-                  {municipioResolvido ? ` em ${municipioResolvido.nome}` : ""}. Tente outro ramo ou confira se a cidade tem poucas empresas cadastradas nessa base.
+                  {municipioResolvido ? ` em ${municipioResolvido.nome}` : ""}. Tente outro ramo, ou busque mais um lote.
                 </div>
+                <button className="btn btn-secondary btn-block" onClick={handleBuscarMais} disabled={buscandoMais}>
+                  {buscandoMais ? "Buscando mais..." : "Buscar mais 600"}
+                </button>
                 {amostraDebug && (
                   <div className="card" style={{ fontSize: 11, color: "var(--ink-soft)", wordBreak: "break-all" }}>
                     <strong style={{ display: "block", marginBottom: 6, color: "var(--ink)" }}>
@@ -192,6 +221,9 @@ export default function Prospeccao() {
                   );
                 })}
                 </div>
+                <button className="btn btn-secondary btn-block" onClick={handleBuscarMais} disabled={buscandoMais} style={{ marginTop: 12 }}>
+                  {buscandoMais ? "Buscando mais..." : `Buscar mais 600 (verificadas até agora: ${totalVarrido})`}
+                </button>
               </>
             )
           )}
