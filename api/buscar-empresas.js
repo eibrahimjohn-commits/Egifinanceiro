@@ -36,27 +36,26 @@ function extrairLista(data) {
 }
 
 function normalizarEmpresa(e, contexto) {
-  const cnpjBruto = e.cnpj || e.cnpj_completo || e.cnpjCompleto || e.full_cnpj || "";
-  const cnpj = String(cnpjBruto).replace(/\D/g, "");
+  const cnpj = String(e.full_cnpj || e.id || "").replace(/\D/g, "");
 
-  const telefoneBruto =
-    e.telefone || e.telefone_1 || e.ddd_telefone_1 || e.phone ||
-    (e.ddd1 && e.telefone1 ? `${e.ddd1}${e.telefone1}` : "");
+  const endereco = e.address
+    ? [e.address.street_type, e.address.street].filter(Boolean).join(" ") +
+      (e.address.number ? `, ${e.address.number}` : "")
+    : "";
 
   return {
     cnpj,
-    razaoSocial: e.razao_social || e.razaoSocial || e.corporate_name || e.nome || "",
-    nomeFantasia: e.nome_fantasia || e.nomeFantasia || e.trade_name || e.fantasia || "",
-    cidade: e.municipio || e.municipio_nome || e.city?.name || e.city || contexto.cidade || "",
-    estado: e.uf || e.state || e.estado || contexto.uf || "",
-    bairro: e.bairro || e.neighborhood || "",
-    logradouro: e.logradouro || e.street || "",
-    telefone: telefoneBruto ? String(telefoneBruto).replace(/\D/g, "") : "",
-    email: e.email || e.correio_eletronico || "",
-    situacaoCadastral:
-      e.situacao_cadastral || e.descricao_situacao_cadastral || e.registration_status || e.situacao || "",
-    dataAbertura: e.data_inicio_atividade || e.data_abertura || e.founded || "",
-    cnae: e.cnae_fiscal || e.cnae_principal?.codigo || e.cnae_principal || e.cnae || contexto.cnae || "",
+    razaoSocial: e.trade_name || "",
+    nomeFantasia: e.trade_name || "",
+    cidade: contexto.cidade || "",
+    estado: contexto.uf || "",
+    bairro: e.address?.neighborhood || "",
+    logradouro: endereco,
+    telefone: e.contact?.phone_1 || e.contact?.phone_2 || "",
+    email: e.contact?.email || "",
+    situacaoCadastral: e.registration_status?.name || "",
+    dataAbertura: e.activity_start_date || "",
+    cnae: e.main_cnae || contexto.cnae || "",
   };
 }
 
@@ -99,8 +98,7 @@ export default async function handler(req, res) {
   }
 
   function cnaeBate(item, alvoDigitos) {
-    const campos = [item.cnae_fiscal, item.cnae_principal?.codigo, item.cnae_principal, item.cnae];
-    return campos.some((c) => c && String(c).replace(/\D/g, "") === alvoDigitos);
+    return item.main_cnae && String(item.main_cnae).replace(/\D/g, "") === alvoDigitos;
   }
 
   try {
