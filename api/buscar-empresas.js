@@ -84,37 +84,57 @@ export default async function handler(req, res) {
     });
   }
 
-  const params = new URLSearchParams();
-  params.append("filter[city_ibge_code]", String(municipio.id));
-  if (cnae) params.append("filter[cnae]", cnae);
-  params.append("per_page", "50");
-  params.append("page", String(pagina || 1));
+  // A API só aceita filtrar por CNPJ ou localização (confirmado por teste real) —
+  // não filtra por CNAE. Então buscamos várias páginas da cidade em paralelo e
+  // filtramos o ramo de atividade aqui.
+  const PAGINAS_PARALELAS = 6;
+  const PER_PAGE = 100;
 
-  const url = `https://app.baseempresarial.com.br/api/v1/establishments?${params.toString()}`;
+  function montarUrl(pagina) {
+    const params = new URLSearchParams();
+    params.append("filter[city_ibge_code]", String(municipio.id));
+    params.append("per_page", String(PER_PAGE));
+    params.append("page", String(pagina));
+    return `https://app.baseempresarial.com.br/api/v1/establishments?${params.toString()}`;
+  }
+
+  function cnaeBate(item, alvoDigitos) {
+    const campos = [item.cnae_fiscal, item.cnae_principal?.codigo, item.cnae_principal, item.cnae];
+    return campos.some((c) => c && String(c).replace(/\D/g, "") === alvoDigitos);
+  }
 
   try {
-    const resposta = await fetch(url, { headers: { Accept: "application/json" } });
-    const texto = await resposta.text();
-    let data;
-    try {
-      data = JSON.parse(texto);
-    } catch {
-      return res.status(502).json({ erro: "A API respondeu algo que não é JSON.", amostra: texto.slice(0, 300) });
+    const paginas = Array.from({ length: PAGINAS_PARALELAS }, (_, i) => i + 1);
+    const respostas = await Promise.allSettled(
+      paginas.map((p) => fetch(montarUrl(p), { headers: { Accept: "application/json" } }).then((r) => r.json()))
+    );
+
+    let brutos = [];
+    let primeiraFalha = null;
+    respostas.forEach((r) => {
+      if (r.status === "fulfilled") {
+        brutos = brutos.concat(extrairLista(r.value));
+      } else if (!primeiraFalha) {
+        primeiraFalha = r.reason;
+      }
+    });
+
+    if (brutos.length === 0 && primeiraFalha) {
+      return res.status(502).json({ erro: "Erro ao consultar a Base Empresarial: " + String(primeiraFalha) });
     }
 
-    if (!resposta.ok) {
-      return res.status(resposta.status).json({
-        erro: data?.message || `A busca falhou (${resposta.status}).`,
-        detalhe: data,
-      });
-    }
+    const cnaeDigitos = cnae ? String(cnae).replace(/\D/g, "") : null;
+    const filtrados = cnaeDigitos ? brutos.filter((e) => cnaeBate(e, cnaeDigitos)) : brutos;
 
-    const lista = extrairLista(data);
-    const empresas = lista.map((e) => normalizarEmpresa(e, { cidade: municipio.nome, uf: uf || municipio?.microrregiao?.mesorregiao?.UF?.sigla, cnae })).filter((e) => e.cnpj);
+    const empresas = filtrados
+      .slice(0, 50)
+      .map((e) => normalizarEmpresa(e, { cidade: municipio.nome, uf: uf || municipio?.microrregiao?.mesorregiao?.UF?.sigla, cnae }))
+      .filter((e) => e.cnpj);
 
     return res.status(200).json({
       total: empresas.length,
       municipioResolvido: { id: municipio.id, nome: municipio.nome },
+      totalVarrido: brutos.length,
       empresas,
     });
   } catch (err) {

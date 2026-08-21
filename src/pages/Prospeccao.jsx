@@ -21,6 +21,7 @@ export default function Prospeccao() {
   const [buscando, setBuscando] = useState(false);
   const [erroBusca, setErroBusca] = useState("");
   const [municipioResolvido, setMunicipioResolvido] = useState(null);
+  const [totalVarrido, setTotalVarrido] = useState(0);
 
   const [cnpjsClientes, setCnpjsClientes] = useState(new Set());
   const [prospeccoes, setProspeccoes] = useState([]);
@@ -50,9 +51,10 @@ export default function Prospeccao() {
     setResultados(null);
     setMunicipioResolvido(null);
     try {
-      const { empresas, municipioResolvido } = await buscarEmpresas({ cidadeNome, uf, cnae });
+      const { empresas, municipioResolvido, totalVarrido } = await buscarEmpresas({ cidadeNome, uf, cnae });
       setResultados(empresas);
       setMunicipioResolvido(municipioResolvido);
+      setTotalVarrido(totalVarrido || 0);
     } catch (err) {
       setErroBusca(err.message);
     } finally {
@@ -143,13 +145,15 @@ export default function Prospeccao() {
           {resultados && (
             resultados.length === 0 ? (
               <div className="empty-state">
-                Nenhuma empresa encontrada{municipioResolvido ? ` em ${municipioResolvido.nome}` : ""} com esses filtros.
+                Nenhuma empresa desse ramo encontrada nas {totalVarrido} empresas verificadas
+                {municipioResolvido ? ` em ${municipioResolvido.nome}` : ""}. Tente outro ramo ou confira se a cidade tem poucas empresas cadastradas nessa base.
               </div>
             ) : (
               <>
                 {municipioResolvido && (
                   <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 8 }}>
-                    Buscando em: <strong>{municipioResolvido.nome}</strong> (IBGE {municipioResolvido.id})
+                    Buscando em: <strong>{municipioResolvido.nome}</strong> · verificamos {totalVarrido} empresas da cidade, {resultados.length} bateram com o ramo escolhido
+                    {totalVarrido >= 600 && " (pode haver mais — a cidade tem muitas empresas cadastradas)"}
                   </div>
                 )}
                 <div className="clientes-grid">
