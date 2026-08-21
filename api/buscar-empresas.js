@@ -136,6 +136,14 @@ export default async function handler(req, res) {
       municipioResolvido: { id: municipio.id, nome: municipio.nome },
       totalVarrido: brutos.length,
       empresas,
+      ...(empresas.length === 0 && brutos.length > 0
+        ? {
+            amostraDebug: {
+              camposDisponiveis: Object.keys(brutos[0]),
+              primeiroRegistro: brutos[0],
+            },
+          }
+        : {}),
     });
   } catch (err) {
     return res.status(502).json({ erro: "Erro ao consultar a Base Empresarial: " + String(err.message || err) });

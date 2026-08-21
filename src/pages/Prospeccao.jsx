@@ -22,6 +22,7 @@ export default function Prospeccao() {
   const [erroBusca, setErroBusca] = useState("");
   const [municipioResolvido, setMunicipioResolvido] = useState(null);
   const [totalVarrido, setTotalVarrido] = useState(0);
+  const [amostraDebug, setAmostraDebug] = useState(null);
 
   const [cnpjsClientes, setCnpjsClientes] = useState(new Set());
   const [prospeccoes, setProspeccoes] = useState([]);
@@ -51,10 +52,11 @@ export default function Prospeccao() {
     setResultados(null);
     setMunicipioResolvido(null);
     try {
-      const { empresas, municipioResolvido, totalVarrido } = await buscarEmpresas({ cidadeNome, uf, cnae });
+      const { empresas, municipioResolvido, totalVarrido, amostraDebug } = await buscarEmpresas({ cidadeNome, uf, cnae });
       setResultados(empresas);
       setMunicipioResolvido(municipioResolvido);
       setTotalVarrido(totalVarrido || 0);
+      setAmostraDebug(amostraDebug || null);
     } catch (err) {
       setErroBusca(err.message);
     } finally {
@@ -144,10 +146,23 @@ export default function Prospeccao() {
 
           {resultados && (
             resultados.length === 0 ? (
-              <div className="empty-state">
-                Nenhuma empresa desse ramo encontrada nas {totalVarrido} empresas verificadas
-                {municipioResolvido ? ` em ${municipioResolvido.nome}` : ""}. Tente outro ramo ou confira se a cidade tem poucas empresas cadastradas nessa base.
-              </div>
+              <>
+                <div className="empty-state">
+                  Nenhuma empresa desse ramo encontrada nas {totalVarrido} empresas verificadas
+                  {municipioResolvido ? ` em ${municipioResolvido.nome}` : ""}. Tente outro ramo ou confira se a cidade tem poucas empresas cadastradas nessa base.
+                </div>
+                {amostraDebug && (
+                  <div className="card" style={{ fontSize: 11, color: "var(--ink-soft)", wordBreak: "break-all" }}>
+                    <strong style={{ display: "block", marginBottom: 6, color: "var(--ink)" }}>
+                      Diagnóstico técnico (manda um print disso pro Claude se o problema continuar):
+                    </strong>
+                    <div style={{ marginBottom: 6 }}>Campos disponíveis: {amostraDebug.camposDisponiveis.join(", ")}</div>
+                    <pre style={{ whiteSpace: "pre-wrap", fontSize: 10 }}>
+                      {JSON.stringify(amostraDebug.primeiroRegistro, null, 2).slice(0, 1500)}
+                    </pre>
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 {municipioResolvido && (
