@@ -42,6 +42,8 @@ export async function buscarEmpresas({ cidadeNome, uf, cnae, pagina = 1 }) {
     let msg = data?.erro || `Falha na busca (${resp.status}).`;
     if (data?.detalhe?.errors) {
       msg += " | " + JSON.stringify(data.detalhe.errors);
+    } else if (data?.detalhe?.message) {
+      msg += " | " + data.detalhe.message;
     }
     throw new Error(msg);
   }

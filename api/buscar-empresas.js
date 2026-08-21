@@ -92,6 +92,7 @@ export default async function handler(req, res) {
   function montarUrl(pagina) {
     const params = new URLSearchParams();
     params.append("filter[city_ibge_code]", String(municipio.id));
+    params.append("sort", "-full_cnpj");
     params.append("per_page", String(PER_PAGE));
     params.append("page", String(pagina));
     return `https://app.baseempresarial.com.br/api/v1/establishments?${params.toString()}`;
@@ -104,7 +105,16 @@ export default async function handler(req, res) {
   try {
     const paginas = Array.from({ length: PAGINAS_PARALELAS }, (_, i) => i + 1);
     const respostas = await Promise.allSettled(
-      paginas.map((p) => fetch(montarUrl(p), { headers: { Accept: "application/json" } }).then((r) => r.json()))
+      paginas.map(async (p) => {
+        const r = await fetch(montarUrl(p), { headers: { Accept: "application/json" } });
+        const json = await r.json();
+        if (!r.ok) {
+          const erro = new Error(json?.message || `Falha na página ${p} (${r.status})`);
+          erro.detalhe = json;
+          throw erro;
+        }
+        return json;
+      })
     );
 
     let brutos = [];
@@ -118,7 +128,10 @@ export default async function handler(req, res) {
     });
 
     if (brutos.length === 0 && primeiraFalha) {
-      return res.status(502).json({ erro: "Erro ao consultar a Base Empresarial: " + String(primeiraFalha) });
+      return res.status(502).json({
+        erro: "Erro ao consultar a Base Empresarial: " + String(primeiraFalha.message || primeiraFalha),
+        detalhe: primeiraFalha.detalhe,
+      });
     }
 
     const cnaeDigitos = cnae ? String(cnae).replace(/\D/g, "") : null;
