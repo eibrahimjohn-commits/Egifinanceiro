@@ -86,6 +86,14 @@ export function calcularValorDevido(valorBruto, descontoTexto) {
   return Number(valorBruto) * (1 - percent / 100);
 }
 
+export const CONTAS_PADRAO = [
+  "Itaú - EGIJJ",
+  "Bradesco - EGIJJ",
+  "Bradesco - EGI",
+  "Stone - EGIJJ",
+  "Terceiros",
+];
+
 export function todayISO() {
   const d = new Date();
   const tz = d.getTimezoneOffset() * 60000;

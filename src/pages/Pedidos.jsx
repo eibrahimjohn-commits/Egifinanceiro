@@ -290,7 +290,7 @@ export default function Pedidos() {
                     onClick={() => preencherCliente(m)}>
                     <div>
                       <strong>{m.nome}</strong>
-                      <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Cód {m.codigo}</div>
+                      <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Cód {m.codigo}{m.estado ? ` · ${m.estado}` : ""}</div>
                     </div>
                   </div>
                 ))}
@@ -331,7 +331,7 @@ export default function Pedidos() {
               <div key={m.id} className="list-item" onClick={() => preencherCliente(m)}>
                 <div>
                   <strong>{m.nome}</strong>
-                  <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Cód {m.codigo}</div>
+                  <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Cód {m.codigo}{m.estado ? ` · ${m.estado}` : ""}</div>
                 </div>
                 <span>→</span>
               </div>

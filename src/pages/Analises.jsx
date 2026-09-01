@@ -114,77 +114,8 @@ export default function Analises({ onAbrirNoVales }) {
 
   return (
     <div>
-      <div className="analises-grid">
-        <div className="card">
-          <h2 className="card-title">Pagamentos atrasados ({atrasados.length})</h2>
-          <div className="analises-col-scroll">
-            {atrasados.length === 0 ? (
-              <div className="empty-state" style={{ padding: 12 }}>Nenhum pagamento atrasado.</div>
-            ) : (
-              atrasados.map((p) => (
-                <div key={p.id} className="list-item" onClick={() => onAbrirNoVales?.(p)}>
-                  <div>
-                    <strong>{p.clienteNome}</strong>
-                    <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                      Pedido em {formatDate(p.data)} · {formatCurrency(Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0))}
-                    </div>
-                  </div>
-                  <span className="badge badge-atraso">Atrasado</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="card">
-          <h2 className="card-title">Clientes inativos (+{DIAS_INATIVO} dias, sem pendências)</h2>
-          <div className="analises-col-scroll">
-            {inativos.length === 0 ? (
-              <div className="empty-state" style={{ padding: 12 }}>Nenhum cliente inativo no momento.</div>
-            ) : (
-              inativos.map((c) => (
-                <div key={c.id} className="list-item">
-                  <div>
-                    <strong>{c.nome}</strong>
-                    <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                      Última compra: {formatDate(ultimaCompraPorCliente[c.id])}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="card">
-          <h2 className="card-title">Mapa de calor — por cidade/estado</h2>
-          <div className="analises-col-scroll">
-            {cidadesOrdenadas.length === 0 ? (
-              <div className="empty-state" style={{ padding: 12 }}>Sem dados de pedidos ainda.</div>
-            ) : (
-              cidadesOrdenadas.map(([cidade, valor]) => (
-                <div key={cidade} style={{ marginBottom: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
-                    <span>{cidade}</span>
-                    <strong>{formatCurrency(valor)}</strong>
-                  </div>
-                  <div style={{ background: "var(--pink-light)", borderRadius: 8, height: 10 }}>
-                    <div style={{
-                      width: `${(valor / maxValor) * 100}%`,
-                      background: "linear-gradient(90deg, var(--pink), var(--grape))",
-                      height: "100%",
-                      borderRadius: 8,
-                    }} />
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="card">
-        <h2 className="card-title">Importar histórico (planilha Pranchteta / PAGOS)</h2>
+      <div className="card" style={{ border: "2px solid var(--pink)" }}>
+        <h2 className="card-title">📤 Importar vales e compras pagas (planilha antiga)</h2>
 
         {!previewHist && !importandoHist && (
           <>
@@ -258,6 +189,75 @@ export default function Analises({ onAbrirNoVales }) {
               : `${resultadoHist.processados} pedidos importados! ${resultadoHist.clientesCriados} clientes novos criados. ${resultadoHist.ignoradas} linhas ignoradas.`}
           </div>
         )}
+      </div>
+
+      <div className="analises-grid">
+        <div className="card">
+          <h2 className="card-title">Pagamentos atrasados ({atrasados.length})</h2>
+          <div className="analises-col-scroll">
+            {atrasados.length === 0 ? (
+              <div className="empty-state" style={{ padding: 12 }}>Nenhum pagamento atrasado.</div>
+            ) : (
+              atrasados.map((p) => (
+                <div key={p.id} className="list-item" onClick={() => onAbrirNoVales?.(p)}>
+                  <div>
+                    <strong>{p.clienteNome}</strong>
+                    <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                      Pedido em {formatDate(p.data)} · {formatCurrency(Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0))}
+                    </div>
+                  </div>
+                  <span className="badge badge-atraso">Atrasado</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="card">
+          <h2 className="card-title">Clientes inativos (+{DIAS_INATIVO} dias, sem pendências)</h2>
+          <div className="analises-col-scroll">
+            {inativos.length === 0 ? (
+              <div className="empty-state" style={{ padding: 12 }}>Nenhum cliente inativo no momento.</div>
+            ) : (
+              inativos.map((c) => (
+                <div key={c.id} className="list-item">
+                  <div>
+                    <strong>{c.nome}</strong>
+                    <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                      Última compra: {formatDate(ultimaCompraPorCliente[c.id])}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="card">
+          <h2 className="card-title">Mapa de calor — por cidade/estado</h2>
+          <div className="analises-col-scroll">
+            {cidadesOrdenadas.length === 0 ? (
+              <div className="empty-state" style={{ padding: 12 }}>Sem dados de pedidos ainda.</div>
+            ) : (
+              cidadesOrdenadas.map(([cidade, valor]) => (
+                <div key={cidade} style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                    <span>{cidade}</span>
+                    <strong>{formatCurrency(valor)}</strong>
+                  </div>
+                  <div style={{ background: "var(--pink-light)", borderRadius: 8, height: 10 }}>
+                    <div style={{
+                      width: `${(valor / maxValor) * 100}%`,
+                      background: "linear-gradient(90deg, var(--pink), var(--grape))",
+                      height: "100%",
+                      borderRadius: 8,
+                    }} />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

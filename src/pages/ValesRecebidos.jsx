@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
 import { listarPedidos, registrarBaixa, confirmarFormaPagamento } from "../lib/pedidos";
-import { formatCurrency, formatDate, todayISO, FORMAS_PAGAMENTO, pedidoEstaAtrasado } from "../lib/constants";
+import { formatCurrency, formatDate, todayISO, FORMAS_PAGAMENTO, CONTAS_PADRAO, pedidoEstaAtrasado } from "../lib/constants";
 
 const FORMAS_COM_CONTA = ["pix_ted", "deposito"];
 const FORMAS_COM_CONFIRMAR = ["pix_ted", "deposito"];
@@ -13,6 +13,13 @@ function labelForma(tipo) {
 function saldoAberto(p) {
   const devido = Number(p.valorDevido ?? p.valor);
   return devido - Number(p.valorPago || 0);
+}
+
+function montarConta(contaSelecionada, identificacao) {
+  if (contaSelecionada === "Terceiros") {
+    return identificacao.trim() ? `Terceiros - ${identificacao.trim()}` : "Terceiros";
+  }
+  return contaSelecionada;
 }
 
 // Agrupa pedidos por "Grupo de cliente" (quando definido) ou por cliente individual.
@@ -43,6 +50,235 @@ function agruparPorCliente(pedidosDoStatus) {
   return Array.from(grupos.values());
 }
 
+// Campo de conta: lista fixa de bancos + "Terceiros" (que abre um campo de identificação).
+// Componente à parte (fora do corpo da página) para nunca perder o foco ao digitar.
+function CampoConta({ conta, setConta, identificacao, setIdentificacao }) {
+  return (
+    <>
+      <div className="field">
+        <label>Conta</label>
+        <select className="input" value={conta} onChange={(e) => setConta(e.target.value)}>
+          <option value="">Selecione...</option>
+          {CONTAS_PADRAO.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+      {conta === "Terceiros" && (
+        <div className="field">
+          <label>Identificação</label>
+          <input className="input" value={identificacao} onChange={(e) => setIdentificacao(e.target.value)}
+            placeholder="Nome da pessoa/conta de terceiro" />
+        </div>
+      )}
+    </>
+  );
+}
+
+function FiltroOrdenacao({ filtro, setFiltro, ordenacao, setOrdenacao }) {
+  return (
+    <div className="card" style={{ padding: 12 }}>
+      <div className="row" style={{ marginBottom: 0 }}>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <input className="input" placeholder="Buscar por cliente ou grupo"
+            value={filtro} onChange={(e) => setFiltro(e.target.value)} />
+        </div>
+        <div className="field" style={{ marginBottom: 0, flex: "0 0 160px" }}>
+          <select className="input" value={ordenacao} onChange={(e) => setOrdenacao(e.target.value)}>
+            <option value="data_desc">Data (recente)</option>
+            <option value="data_asc">Data (antiga)</option>
+            <option value="valor_desc">Valor (maior)</option>
+            <option value="valor_asc">Valor (menor)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------- Tela única de detalhe do cliente/grupo: tudo visível de uma vez -------
+// Componente à parte (fora do corpo da página) para nunca perder o foco ao digitar.
+function DetalheCliente({
+  g, onVoltar,
+  pedidoBaixa, onAbrirBaixa, onCancelarBaixa, onConfirmarBaixa,
+  valorBaixa, setValorBaixa, dataBaixa, setDataBaixa, formaBaixa, setFormaBaixa,
+  contaBaixa, setContaBaixa, contaBaixaId, setContaBaixaId,
+  confirmando, onAbrirConfirmar, onCancelarConfirmar, onConfirmarPixDeposito,
+  contaConfirmar, setContaConfirmar, contaConfirmarId, setContaConfirmarId,
+}) {
+  const totalDevido = g.pedidos.reduce((s, p) => s + Number(p.valorDevido ?? p.valor), 0);
+  const totalPago = g.pedidos.reduce((s, p) => s + Number(p.valorPago || 0), 0);
+  const saldo = totalDevido - totalPago;
+
+  const historico = g.pedidos
+    .flatMap((p) => (p.pagamentos || []).map((pg) => ({ ...pg, pedidoData: p.data })))
+    .sort((a, b) => new Date(b.data) - new Date(a.data));
+
+  const pedidosAbertos = g.pedidos.filter((p) => saldoAberto(p) > 0.01);
+
+  return (
+    <div>
+      <div className="card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 8 }}>
+          <div>
+            <h2 className="card-title" style={{ marginBottom: 4 }}>
+              {g.nomeGrupo || Array.from(g.clientesNomes)[0]}
+            </h2>
+            <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+              {g.clientesNomes.size > 1
+                ? `${g.clientesNomes.size} CNPJs: ${Array.from(g.clientesNomes).join(", ")}`
+                : "Cliente único"}
+            </div>
+          </div>
+          <button type="button" className="btn btn-ghost" onClick={onVoltar}>Voltar</button>
+        </div>
+
+        <div className="row">
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Valor total devido</div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{formatCurrency(totalDevido)}</div>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+              {saldo < -0.01 ? "Crédito do cliente" : "Em aberto"}
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: saldo > 0.01 ? "var(--red)" : "var(--green)" }}>
+              {saldo < -0.01 ? formatCurrency(-saldo) : formatCurrency(Math.max(saldo, 0))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Registrar pagamento — direto aqui, sem navegar */}
+      {pedidosAbertos.length > 0 && !pedidoBaixa && (
+        <div className="card">
+          <h3 style={{ fontSize: 15, marginBottom: 10 }}>Registrar pagamento</h3>
+          {pedidosAbertos.length === 1 ? (
+            <button className="btn btn-primary btn-block" onClick={() => onAbrirBaixa(pedidosAbertos[0])}>
+              Registrar pagamento de {formatCurrency(saldoAberto(pedidosAbertos[0]))}
+            </button>
+          ) : (
+            <>
+              <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 10 }}>
+                Esse cliente tem {pedidosAbertos.length} pedidos em aberto — escolha em qual registrar:
+              </div>
+              {pedidosAbertos.map((p) => (
+                <div key={p.id} className="list-item" onClick={() => onAbrirBaixa(p)}>
+                  <div>
+                    <strong>{formatDate(p.data)}</strong>
+                    <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>{formatCurrency(saldoAberto(p))} em aberto</div>
+                  </div>
+                  <span>→</span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
+      {pedidoBaixa && (
+        <div className="card">
+          <h3 style={{ fontSize: 15, marginBottom: 10 }}>
+            Registrar pagamento — pedido de {formatDate(pedidoBaixa.data)}
+          </h3>
+          <div className="row">
+            <div className="field">
+              <label>Valor recebido</label>
+              <input className="input" type="number" step="0.01" value={valorBaixa}
+                onChange={(e) => setValorBaixa(e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Data</label>
+              <input className="input" type="date" value={dataBaixa}
+                onChange={(e) => setDataBaixa(e.target.value)} />
+            </div>
+          </div>
+          <div className="field">
+            <label>Forma de pagamento</label>
+            <select className="input" value={formaBaixa} onChange={(e) => setFormaBaixa(e.target.value)}>
+              {FORMAS_PAGAMENTO.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+            </select>
+          </div>
+          {FORMAS_COM_CONTA.includes(formaBaixa) && (
+            <CampoConta conta={contaBaixa} setConta={setContaBaixa} identificacao={contaBaixaId} setIdentificacao={setContaBaixaId} />
+          )}
+          <div className="row">
+            <button type="button" className="btn btn-ghost btn-block" onClick={onCancelarBaixa}>Cancelar</button>
+            <button type="button" className="btn btn-primary btn-block" onClick={onConfirmarBaixa}>Confirmar</button>
+          </div>
+        </div>
+      )}
+
+      {/* Pedidos e formas de pagamento — tudo já visível, sem clicar de novo */}
+      <div className="card">
+        <h3 style={{ fontSize: 15, marginBottom: 10 }}>
+          {g.pedidos.length > 1 ? `${g.pedidos.length} pedidos` : "Pedido"}
+        </h3>
+        {g.pedidos.map((p) => (
+          <div key={p.id} style={{ marginBottom: 18, paddingBottom: 16, borderBottom: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+              <strong style={{ fontSize: 14 }}>
+                {formatDate(p.data)} · {formatCurrency(p.valor)}
+                {p.desconto ? ` (desc. ${p.desconto})` : ""}
+              </strong>
+              <span className={"badge " + (saldoAberto(p) > 0.01 ? (pedidoEstaAtrasado(p) ? "badge-atraso" : "badge-aberto") : "badge-pago")}>
+                {saldoAberto(p) > 0.01 ? (pedidoEstaAtrasado(p) ? "Atrasado" : "Em aberto") : "Pago"}
+              </span>
+            </div>
+
+            {p.formasPagamento?.map((f, i) => (
+              <div key={i} style={{ marginBottom: 6, marginLeft: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
+                  <span>
+                    {labelForma(f.tipo)}
+                    {f.confirmado && <span style={{ color: "var(--green)", fontWeight: 700 }}> ✓ confirmado</span>}
+                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <strong>{formatCurrency(f.valor)}</strong>
+                    {FORMAS_COM_CONFIRMAR.includes(f.tipo) && !f.confirmado && (
+                      <button type="button" className="btn btn-secondary" style={{ padding: "4px 10px", fontSize: 12 }}
+                        onClick={() => onAbrirConfirmar(p, i)}>
+                        Confirmar
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {f.tipo === "cheque" && f.parcelas?.map((parc) => (
+                  <div key={parc.numero} style={{ fontSize: 12, color: "var(--ink-soft)", paddingLeft: 12 }}>
+                    Folha {parc.numero}: {formatCurrency(parc.valor)} em {formatDate(parc.data)}
+                  </div>
+                ))}
+
+                {confirmando?.pedido.id === p.id && confirmando?.formaIndex === i && (
+                  <div style={{ background: "var(--bg)", borderRadius: 10, padding: 10, marginTop: 6 }}>
+                    <CampoConta conta={contaConfirmar} setConta={setContaConfirmar} identificacao={contaConfirmarId} setIdentificacao={setContaConfirmarId} />
+                    <div className="row" style={{ margin: 0 }}>
+                      <button type="button" className="btn btn-ghost btn-block" style={{ padding: "6px 10px", fontSize: 13 }}
+                        onClick={onCancelarConfirmar}>Cancelar</button>
+                      <button type="button" className="btn btn-primary btn-block" style={{ padding: "6px 10px", fontSize: 13 }}
+                        onClick={onConfirmarPixDeposito}>Confirmar recebimento</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {historico.length > 0 && (
+        <div className="card">
+          <h3 style={{ fontSize: 15, marginBottom: 10 }}>Pagamentos já registrados</h3>
+          {historico.map((pg, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+              <span>{formatDate(pg.data)} · {labelForma(pg.formaPagamento)}{pg.conta ? ` (${pg.conta})` : ""}</span>
+              <strong>{formatCurrency(pg.valor)}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const [sub, setSub] = useState("vales");
   const [pedidos, setPedidos] = useState([]);
@@ -58,9 +294,11 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const [dataBaixa, setDataBaixa] = useState(todayISO());
   const [formaBaixa, setFormaBaixa] = useState("pix_ted");
   const [contaBaixa, setContaBaixa] = useState("");
+  const [contaBaixaId, setContaBaixaId] = useState("");
 
   const [confirmando, setConfirmando] = useState(null); // { pedido, formaIndex }
   const [contaConfirmar, setContaConfirmar] = useState("");
+  const [contaConfirmarId, setContaConfirmarId] = useState("");
 
   const [toast, setToast] = useState("");
 
@@ -128,7 +366,6 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     const atualizado = grupos.find((g) => g.chave === chaveGrupo);
     setClienteAberto(atualizado || null);
     if (!atualizado) {
-      // o grupo pode ter mudado de aba (ex: virou "pago") — tenta achar na outra lista
       const outros = agruparPorCliente(lista.filter((p) => p.status !== statusAlvo));
       const outroGrupo = outros.find((g) => g.chave === chaveGrupo);
       if (outroGrupo) { setClienteAberto(outroGrupo); setSub(statusAlvo === "aberto" ? "recebidos" : "vales"); }
@@ -141,6 +378,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     setDataBaixa(todayISO());
     setFormaBaixa("pix_ted");
     setContaBaixa("");
+    setContaBaixaId("");
   }
 
   async function confirmarBaixa() {
@@ -152,7 +390,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
       valor: Number(valorBaixa),
       data: dataBaixa,
       formaPagamento: formaBaixa,
-      conta: FORMAS_COM_CONTA.includes(formaBaixa) ? contaBaixa : null,
+      conta: FORMAS_COM_CONTA.includes(formaBaixa) ? montarConta(contaBaixa, contaBaixaId) : null,
     });
     mostrarToast("Pagamento registrado!");
     setPedidoBaixa(null);
@@ -162,229 +400,40 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   function abrirConfirmar(pedido, formaIndex) {
     setConfirmando({ pedido, formaIndex });
     setContaConfirmar("");
+    setContaConfirmarId("");
   }
 
   async function confirmarPixDeposito() {
     const { pedido, formaIndex } = confirmando;
-    await confirmarFormaPagamento(pedido.id, pedido, formaIndex, contaConfirmar);
+    await confirmarFormaPagamento(pedido.id, pedido, formaIndex, montarConta(contaConfirmar, contaConfirmarId));
     mostrarToast("Pagamento confirmado e baixado!");
     setConfirmando(null);
     recarregarEManterAberto(clienteAberto.chave, "aberto");
-  }
-
-  function FiltroOrdenacao() {
-    return (
-      <div className="card" style={{ padding: 12 }}>
-        <div className="row" style={{ marginBottom: 0 }}>
-          <div className="field" style={{ marginBottom: 0 }}>
-            <input className="input" placeholder="Buscar por cliente ou grupo"
-              value={filtro} onChange={(e) => setFiltro(e.target.value)} />
-          </div>
-          <div className="field" style={{ marginBottom: 0, flex: "0 0 160px" }}>
-            <select className="input" value={ordenacao} onChange={(e) => setOrdenacao(e.target.value)}>
-              <option value="data_desc">Data (recente)</option>
-              <option value="data_asc">Data (antiga)</option>
-              <option value="valor_desc">Valor (maior)</option>
-              <option value="valor_asc">Valor (menor)</option>
-            </select>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ------- Tela única de detalhe do cliente/grupo: tudo visível de uma vez -------
-  function DetalheCliente() {
-    const g = clienteAberto;
-    const totalDevido = g.pedidos.reduce((s, p) => s + Number(p.valorDevido ?? p.valor), 0);
-    const totalPago = g.pedidos.reduce((s, p) => s + Number(p.valorPago || 0), 0);
-    const saldo = totalDevido - totalPago;
-
-    // histórico combinado de todos os pedidos do grupo, mais recente primeiro
-    const historico = g.pedidos
-      .flatMap((p) => (p.pagamentos || []).map((pg) => ({ ...pg, pedidoData: p.data })))
-      .sort((a, b) => new Date(b.data) - new Date(a.data));
-
-    const pedidosAbertos = g.pedidos.filter((p) => saldoAberto(p) > 0.01);
-
-    return (
-      <div>
-        <div className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 8 }}>
-            <div>
-              <h2 className="card-title" style={{ marginBottom: 4 }}>
-                {g.nomeGrupo || Array.from(g.clientesNomes)[0]}
-              </h2>
-              <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                {g.clientesNomes.size > 1
-                  ? `${g.clientesNomes.size} CNPJs: ${Array.from(g.clientesNomes).join(", ")}`
-                  : "Cliente único"}
-              </div>
-            </div>
-            <button type="button" className="btn btn-ghost" onClick={() => setClienteAberto(null)}>Voltar</button>
-          </div>
-
-          <div className="row">
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Valor total devido</div>
-              <div style={{ fontSize: 18, fontWeight: 700 }}>{formatCurrency(totalDevido)}</div>
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                {saldo < -0.01 ? "Crédito do cliente" : "Em aberto"}
-              </div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: saldo > 0.01 ? "var(--red)" : "var(--green)" }}>
-                {saldo < -0.01 ? formatCurrency(-saldo) : formatCurrency(Math.max(saldo, 0))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Registrar pagamento — direto aqui, sem navegar */}
-        {pedidosAbertos.length > 0 && !pedidoBaixa && (
-          <div className="card">
-            <h3 style={{ fontSize: 15, marginBottom: 10 }}>Registrar pagamento</h3>
-            {pedidosAbertos.length === 1 ? (
-              <button className="btn btn-primary btn-block" onClick={() => abrirBaixa(pedidosAbertos[0])}>
-                Registrar pagamento de {formatCurrency(saldoAberto(pedidosAbertos[0]))}
-              </button>
-            ) : (
-              <>
-                <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 10 }}>
-                  Esse cliente tem {pedidosAbertos.length} pedidos em aberto — escolha em qual registrar:
-                </div>
-                {pedidosAbertos.map((p) => (
-                  <div key={p.id} className="list-item" onClick={() => abrirBaixa(p)}>
-                    <div>
-                      <strong>{formatDate(p.data)}</strong>
-                      <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>{formatCurrency(saldoAberto(p))} em aberto</div>
-                    </div>
-                    <span>→</span>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-        )}
-
-        {pedidoBaixa && (
-          <div className="card">
-            <h3 style={{ fontSize: 15, marginBottom: 10 }}>
-              Registrar pagamento — pedido de {formatDate(pedidoBaixa.data)}
-            </h3>
-            <div className="row">
-              <div className="field">
-                <label>Valor recebido</label>
-                <input className="input" type="number" step="0.01" value={valorBaixa}
-                  onChange={(e) => setValorBaixa(e.target.value)} />
-              </div>
-              <div className="field">
-                <label>Data</label>
-                <input className="input" type="date" value={dataBaixa}
-                  onChange={(e) => setDataBaixa(e.target.value)} />
-              </div>
-            </div>
-            <div className="field">
-              <label>Forma de pagamento</label>
-              <select className="input" value={formaBaixa} onChange={(e) => setFormaBaixa(e.target.value)}>
-                {FORMAS_PAGAMENTO.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
-              </select>
-            </div>
-            {FORMAS_COM_CONTA.includes(formaBaixa) && (
-              <div className="field">
-                <label>Conta</label>
-                <input className="input" value={contaBaixa} onChange={(e) => setContaBaixa(e.target.value)}
-                  placeholder="Ex: Banco do Brasil, Nubank..." />
-              </div>
-            )}
-            <div className="row">
-              <button type="button" className="btn btn-ghost btn-block" onClick={() => setPedidoBaixa(null)}>Cancelar</button>
-              <button type="button" className="btn btn-primary btn-block" onClick={confirmarBaixa}>Confirmar</button>
-            </div>
-          </div>
-        )}
-
-        {/* Pedidos e formas de pagamento — tudo já visível, sem clicar de novo */}
-        <div className="card">
-          <h3 style={{ fontSize: 15, marginBottom: 10 }}>
-            {g.pedidos.length > 1 ? `${g.pedidos.length} pedidos` : "Pedido"}
-          </h3>
-          {g.pedidos.map((p) => (
-            <div key={p.id} style={{ marginBottom: 18, paddingBottom: 16, borderBottom: "1px solid var(--border)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                <strong style={{ fontSize: 14 }}>
-                  {formatDate(p.data)} · {formatCurrency(p.valor)}
-                  {p.desconto ? ` (desc. ${p.desconto})` : ""}
-                </strong>
-                <span className={"badge " + (saldoAberto(p) > 0.01 ? (pedidoEstaAtrasado(p) ? "badge-atraso" : "badge-aberto") : "badge-pago")}>
-                  {saldoAberto(p) > 0.01 ? (pedidoEstaAtrasado(p) ? "Atrasado" : "Em aberto") : "Pago"}
-                </span>
-              </div>
-
-              {p.formasPagamento?.map((f, i) => (
-                <div key={i} style={{ marginBottom: 6, marginLeft: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
-                    <span>
-                      {labelForma(f.tipo)}
-                      {f.confirmado && <span style={{ color: "var(--green)", fontWeight: 700 }}> ✓ confirmado</span>}
-                    </span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <strong>{formatCurrency(f.valor)}</strong>
-                      {FORMAS_COM_CONFIRMAR.includes(f.tipo) && !f.confirmado && (
-                        <button type="button" className="btn btn-secondary" style={{ padding: "4px 10px", fontSize: 12 }}
-                          onClick={() => abrirConfirmar(p, i)}>
-                          Confirmar
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {f.tipo === "cheque" && f.parcelas?.map((parc) => (
-                    <div key={parc.numero} style={{ fontSize: 12, color: "var(--ink-soft)", paddingLeft: 12 }}>
-                      Folha {parc.numero}: {formatCurrency(parc.valor)} em {formatDate(parc.data)}
-                    </div>
-                  ))}
-
-                  {confirmando?.pedido.id === p.id && confirmando?.formaIndex === i && (
-                    <div style={{ background: "var(--bg)", borderRadius: 10, padding: 10, marginTop: 6 }}>
-                      <div className="field" style={{ marginBottom: 8 }}>
-                        <label style={{ fontSize: 12 }}>Conta que recebeu</label>
-                        <input className="input" value={contaConfirmar} onChange={(e) => setContaConfirmar(e.target.value)}
-                          placeholder="Ex: Banco do Brasil, Nubank..." />
-                      </div>
-                      <div className="row" style={{ margin: 0 }}>
-                        <button type="button" className="btn btn-ghost btn-block" style={{ padding: "6px 10px", fontSize: 13 }}
-                          onClick={() => setConfirmando(null)}>Cancelar</button>
-                        <button type="button" className="btn btn-primary btn-block" style={{ padding: "6px 10px", fontSize: 13 }}
-                          onClick={confirmarPixDeposito}>Confirmar recebimento</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-
-        {historico.length > 0 && (
-          <div className="card">
-            <h3 style={{ fontSize: 15, marginBottom: 10 }}>Pagamentos já registrados</h3>
-            {historico.map((pg, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                <span>{formatDate(pg.data)} · {labelForma(pg.formaPagamento)}{pg.conta ? ` (${pg.conta})` : ""}</span>
-                <strong>{formatCurrency(pg.valor)}</strong>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
   }
 
   if (clienteAberto) {
     return (
       <div>
         {toast && <div className="toast">{toast}</div>}
-        <DetalheCliente />
+        <DetalheCliente
+          g={clienteAberto}
+          onVoltar={() => setClienteAberto(null)}
+          pedidoBaixa={pedidoBaixa}
+          onAbrirBaixa={abrirBaixa}
+          onCancelarBaixa={() => setPedidoBaixa(null)}
+          onConfirmarBaixa={confirmarBaixa}
+          valorBaixa={valorBaixa} setValorBaixa={setValorBaixa}
+          dataBaixa={dataBaixa} setDataBaixa={setDataBaixa}
+          formaBaixa={formaBaixa} setFormaBaixa={setFormaBaixa}
+          contaBaixa={contaBaixa} setContaBaixa={setContaBaixa}
+          contaBaixaId={contaBaixaId} setContaBaixaId={setContaBaixaId}
+          confirmando={confirmando}
+          onAbrirConfirmar={abrirConfirmar}
+          onCancelarConfirmar={() => setConfirmando(null)}
+          onConfirmarPixDeposito={confirmarPixDeposito}
+          contaConfirmar={contaConfirmar} setContaConfirmar={setContaConfirmar}
+          contaConfirmarId={contaConfirmarId} setContaConfirmarId={setContaConfirmarId}
+        />
       </div>
     );
   }
@@ -404,7 +453,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
         </button>
       </div>
 
-      <FiltroOrdenacao />
+      <FiltroOrdenacao filtro={filtro} setFiltro={setFiltro} ordenacao={ordenacao} setOrdenacao={setOrdenacao} />
 
       {carregando && <div className="empty-state">Carregando...</div>}
 
