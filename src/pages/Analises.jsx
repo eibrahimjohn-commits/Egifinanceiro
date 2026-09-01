@@ -3,7 +3,7 @@ import "../components/ui.css";
 import { listarPedidos, importarHistoricoPedidos } from "../lib/pedidos";
 import { listarClientes, registrarContatoInativo } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
-import { formatCurrency, formatDate, pedidoEstaAtrasado } from "../lib/constants";
+import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo } from "../lib/constants";
 
 const DIAS_INATIVO = 60;
 const DIAS_COOLDOWN_CONTATO = 14;
@@ -241,7 +241,16 @@ export default function Analises({ onAbrirNoVales }) {
                     <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
                       Última compra: {formatDate(ultimaCompraPorCliente[c.id] || c.ultimaCompraPlanilha)}
                     </div>
-                    {telefone && <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>📞 {telefone}</div>}
+                    {telefone && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>📞 {telefone}</span>
+                        <a href={linkWhatsAppInativo(telefone, c.nome)} target="_blank" rel="noopener noreferrer"
+                          className="btn btn-secondary" style={{ fontSize: 12, padding: "4px 10px" }}
+                          onClick={(e) => e.stopPropagation()}>
+                          Mandar mensagem
+                        </a>
+                      </div>
+                    )}
                     <button className="btn btn-secondary" style={{ fontSize: 12, padding: "6px 10px", alignSelf: "flex-start" }}
                       onClick={() => handleContatoRealizado(c.id)}>
                       Contato realizado

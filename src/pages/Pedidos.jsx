@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import "../components/ui.css";
 import { buscarCliente, salvarCliente, consultarCnpj } from "../lib/clientes";
-import { criarPedido } from "../lib/pedidos";
+import { criarPedido, buscarPendenciasCliente } from "../lib/pedidos";
 import {
   FORMAS_PAGAMENTO,
   FORMAS_RECEBIMENTO_IMEDIATO,
@@ -48,6 +48,7 @@ export default function Pedidos() {
 
   const [salvando, setSalvando] = useState(false);
   const [toast, setToast] = useState("");
+  const [aviso, setAviso] = useState(null); // { valesAbertos, chequesACair, nomeCliente }
 
   function mostrarToast(msg) {
     setToast(msg);
@@ -109,6 +110,18 @@ export default function Pedidos() {
     });
     setMatches([]);
     setSugestoesNome([]);
+    verificarPendencias(c);
+  }
+
+  async function verificarPendencias(c) {
+    try {
+      const { valesAbertos, chequesACair } = await buscarPendenciasCliente({ clienteId: c.id, grupo: c.grupo });
+      if (valesAbertos.length > 0 || chequesACair.length > 0) {
+        setAviso({ valesAbertos, chequesACair, nomeCliente: c.nome });
+      }
+    } catch {
+      // se falhar a checagem, não trava o lançamento do pedido
+    }
   }
 
   // Consulta pública de CNPJ: preenche razão social/cidade/estado, mas NUNCA sobrescreve
@@ -259,6 +272,44 @@ export default function Pedidos() {
   }
 
   return (
+    <>
+      {aviso && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(43,33,64,0.5)", zIndex: 100,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+        }} onClick={() => setAviso(null)}>
+          <div className="card" style={{ maxWidth: 420, width: "100%", maxHeight: "80vh", overflowY: "auto" }}
+            onClick={(e) => e.stopPropagation()}>
+            <h2 className="card-title" style={{ color: "var(--red)" }}>⚠️ Atenção: {aviso.nomeCliente}</h2>
+
+            {aviso.valesAbertos.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>Vale(s) em aberto:</div>
+                {aviso.valesAbertos.map((v, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "4px 0" }}>
+                    <span>{formatDate(v.data)}</span>
+                    <strong style={{ color: "var(--red)" }}>{formatCurrency(v.saldo)}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {aviso.chequesACair.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>Cheque(s) a cair:</div>
+                {aviso.chequesACair.map((c, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "4px 0" }}>
+                    <span>Folha {c.numero} — {formatDate(c.data)}</span>
+                    <strong>{formatCurrency(c.valor)}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <button className="btn btn-primary btn-block" onClick={() => setAviso(null)}>Entendi</button>
+          </div>
+        </div>
+      )}
     <form onSubmit={handleSalvar}>
       {toast && <div className="toast">{toast}</div>}
 
@@ -499,5 +550,6 @@ export default function Pedidos() {
       </div>
       </div>
     </form>
+    </>
   );
 }

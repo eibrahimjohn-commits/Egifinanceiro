@@ -100,6 +100,19 @@ export function todayISO() {
   return new Date(d - tz).toISOString().slice(0, 10);
 }
 
+// Gera o link do WhatsApp com o número já formatado (adiciona 55 se faltar) e a
+// mensagem de reengajamento pronta pro cliente inativo.
+export function linkWhatsAppInativo(telefone, nomeCliente) {
+  let digitos = String(telefone || "").replace(/\D/g, "");
+  if (digitos.length <= 11) digitos = "55" + digitos; // adiciona DDI Brasil se faltar
+  const mensagem =
+    `Olá ${nomeCliente}, tudo bem?\n` +
+    `Percebi que faz um tempo que não compra com a gente, como foi a saída do último pedido? ` +
+    `Posso estar enviando nosso novo catálogo com muitas novidades? 😁\n` +
+    `Aguardo retorno`;
+  return `https://wa.me/${digitos}?text=${encodeURIComponent(mensagem)}`;
+}
+
 // --- Lógica de status "resumo do cliente" na aba Vales ---------------------
 // percentual em aberto = saldo em aberto / valor total devido, em %.
 // Negativo = cliente pagou a mais (crédito).

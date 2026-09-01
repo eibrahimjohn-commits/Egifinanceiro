@@ -10,6 +10,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
+import { todayISO } from "./constants";
 
 const pedidosRef = collection(db, "pedidos");
 
@@ -42,6 +43,35 @@ export async function listarPedidos() {
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     .sort((a, b) => new Date(b.data || 0) - new Date(a.data || 0));
+}
+
+// Verifica se o cliente (ou grupo) tem vale em aberto ou cheque ainda a cair, pra
+// avisar quem tá lançando um pedido novo antes de fechar a venda.
+export async function buscarPendenciasCliente({ clienteId, grupo }) {
+  const todos = await listarPedidos();
+  const grupoNorm = (grupo || "").trim().toLowerCase();
+  const doCliente = todos.filter((p) => {
+    if (p.arquivado) return false;
+    if (grupoNorm) return (p.clienteGrupo || "").trim().toLowerCase() === grupoNorm;
+    return p.clienteId === clienteId;
+  });
+
+  const valesAbertos = doCliente
+    .filter((p) => p.status === "aberto")
+    .map((p) => ({
+      data: p.data,
+      saldo: Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0),
+    }))
+    .filter((v) => v.saldo > 0.01);
+
+  const hoje = todayISO();
+  const chequesACair = doCliente.flatMap((p) =>
+    (p.formasPagamento || [])
+      .filter((f) => f.tipo === "cheque")
+      .flatMap((f) => (f.parcelas || []).filter((parc) => parc.data >= hoje).map((parc) => ({ ...parc, pedidoData: p.data })))
+  );
+
+  return { valesAbertos, chequesACair };
 }
 
 // Confirma uma forma de pagamento específica (PIX/TED ou Depósito) dentro de um pedido:
