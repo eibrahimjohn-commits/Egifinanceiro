@@ -233,6 +233,14 @@ export async function listarGruposUnicos() {
   return Array.from(grupos).sort();
 }
 
+// Marca que o contato foi feito com um cliente inativo — some da lista de inativos
+// por 14 dias (ou até ele comprar de novo, o que vier primeiro).
+export async function registrarContatoInativo(clienteId) {
+  await updateDoc(doc(db, "clientes", clienteId), {
+    ultimoContatoInativo: new Date().toISOString().slice(0, 10),
+  });
+}
+
 // Consulta gratuita e pública de dados cadastrais de CNPJ via BrasilAPI.
 // Traz também informações públicas adicionais (telefone, situação cadastral, capital social).
 // Obs: faturamento da empresa NÃO é informação pública no Brasil (sigilo fiscal) — não é retornado.

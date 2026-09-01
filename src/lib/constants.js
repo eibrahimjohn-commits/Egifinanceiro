@@ -65,7 +65,7 @@ export function formatDate(dateStr) {
 // data do pedido), não mais nas parcelas de cheque — cheque já conta como recebido
 // (fica em Recebidos), então não deve ser motivo de "atraso".
 export function pedidoEstaAtrasado(pedido) {
-  if (pedido.status !== "aberto") return false;
+  if (pedido.status !== "aberto" || pedido.arquivado) return false;
   const prazoDias = Number(pedido.clientePrazo);
   if (!prazoDias || prazoDias <= 0) return false; // sem prazo definido, não dá pra avaliar
   const limite = new Date(new Date(pedido.data + "T00:00:00").getTime() + prazoDias * 86400000);
@@ -98,4 +98,30 @@ export function todayISO() {
   const d = new Date();
   const tz = d.getTimezoneOffset() * 60000;
   return new Date(d - tz).toISOString().slice(0, 10);
+}
+
+// --- Lógica de status "resumo do cliente" na aba Vales ---------------------
+// percentual em aberto = saldo em aberto / valor total devido, em %.
+// Negativo = cliente pagou a mais (crédito).
+export function calcularPercentualAberto(saldo, totalDevido) {
+  if (!totalDevido || totalDevido === 0) return 0;
+  return (saldo / totalDevido) * 100;
+}
+
+// Tag exibida no resumo do cliente, considerando o percentual em aberto:
+// - saldo negativo (pagou a mais) -> "A ver"
+// - percentual <= 1% -> "Pago" (mas só sai da lista quando movido manualmente)
+// - percentual <= 10% (inclui atrasado) -> continua "Em aberto"/"Atrasado", mas já
+//   libera o botão de mover pra recebidos
+export function tagResumoCliente(saldo, percentual, atrasado) {
+  if (saldo < -0.01) return { texto: "A ver", classe: "badge-aver" };
+  if (percentual <= 1.0001) return { texto: "Pago", classe: "badge-pago" };
+  if (atrasado) return { texto: "Atrasado", classe: "badge-atraso" };
+  return { texto: "Em aberto", classe: "badge-aberto" };
+}
+
+// Pode mover manualmente pra Recebidos quando o percentual em aberto (ignorando
+// sinal, já que crédito também conta como "resolvido") for <= 10%.
+export function podeMoverParaRecebidos(percentual) {
+  return percentual <= 10.0001;
 }

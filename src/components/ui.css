@@ -92,6 +92,7 @@
 .badge-aberto { background: var(--yellow-light); color: #9a6b00; }
 .badge-pago { background: var(--green-light); color: #158a45; }
 .badge-atraso { background: var(--red-light); color: var(--red); }
+.badge-aver { background: var(--grape-light); color: var(--grape); }
 
 .list-item {
   display: flex;

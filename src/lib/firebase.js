@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBmFbOWy-aMCwJJlzVytvqdc3itDaRH2b4",
@@ -12,4 +12,10 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+
+// Cache local persistente: o app funciona offline (lê dados já vistos antes, permite
+// criar/editar) e sincroniza sozinho com o servidor assim que a internet voltar.
+// persistentMultipleTabManager permite abrir o site em mais de uma aba sem conflito.
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});

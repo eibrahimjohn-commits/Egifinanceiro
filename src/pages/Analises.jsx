@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
 import { listarPedidos, importarHistoricoPedidos } from "../lib/pedidos";
-import { listarClientes } from "../lib/clientes";
+import { listarClientes, registrarContatoInativo } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
 import { formatCurrency, formatDate, pedidoEstaAtrasado } from "../lib/constants";
 
 const DIAS_INATIVO = 60;
+const DIAS_COOLDOWN_CONTATO = 14;
 
 export default function Analises({ onAbrirNoVales }) {
   const [pedidos, setPedidos] = useState([]);
@@ -29,6 +30,11 @@ export default function Analises({ onAbrirNoVales }) {
   }, []);
 
   if (carregando) return <div className="empty-state">Carregando análises...</div>;
+
+  async function handleContatoRealizado(clienteId) {
+    await registrarContatoInativo(clienteId);
+    setClientes((atual) => atual.map((c) => (c.id === clienteId ? { ...c, ultimoContatoInativo: new Date().toISOString().slice(0, 10) } : c)));
+  }
 
   async function handleArquivoHistorico(e) {
     const file = e.target.files[0];
@@ -100,7 +106,15 @@ export default function Analises({ onAbrirNoVales }) {
       : (doSistema || daPlanilha);
     if (!ultima) return false; // nunca comprou - não é "parou de comprar"
     const dias = (hoje - new Date(ultima)) / 86400000;
-    return dias >= DIAS_INATIVO;
+    if (dias < DIAS_INATIVO) return false;
+    // se já entramos em contato recentemente (e ele não comprou depois disso),
+    // não repete na lista até passar o prazo de reabordagem
+    if (c.ultimoContatoInativo) {
+      const diasContato = (hoje - new Date(c.ultimoContatoInativo)) / 86400000;
+      const contatoDepoisDaCompra = new Date(c.ultimoContatoInativo) > new Date(ultima);
+      if (contatoDepoisDaCompra && diasContato < DIAS_COOLDOWN_CONTATO) return false;
+    }
+    return true;
   });
 
   // Heatmap simples por cidade/estado (contagem de pedidos)
@@ -219,16 +233,22 @@ export default function Analises({ onAbrirNoVales }) {
             {inativos.length === 0 ? (
               <div className="empty-state" style={{ padding: 12 }}>Nenhum cliente inativo no momento.</div>
             ) : (
-              inativos.map((c) => (
-                <div key={c.id} className="list-item">
-                  <div>
+              inativos.map((c) => {
+                const telefone = c.telefones?.[0] || c.whatsapp || c.infoExtra?.telefone;
+                return (
+                  <div key={c.id} className="list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
                     <strong>{c.nome}</strong>
                     <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                      Última compra: {formatDate(ultimaCompraPorCliente[c.id])}
+                      Última compra: {formatDate(ultimaCompraPorCliente[c.id] || c.ultimaCompraPlanilha)}
                     </div>
+                    {telefone && <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>📞 {telefone}</div>}
+                    <button className="btn btn-secondary" style={{ fontSize: 12, padding: "6px 10px", alignSelf: "flex-start" }}
+                      onClick={() => handleContatoRealizado(c.id)}>
+                      Contato realizado
+                    </button>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

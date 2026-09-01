@@ -179,3 +179,13 @@ export async function importarHistoricoPedidos(pedidosParseados, clientesExisten
 
   return { processados, clientesCriados };
 }
+
+// Arquiva pedidos (marca como definitivamente "recebidos") — usado tanto pelo botão
+// "Mover para recebidos" quanto por "Comissão paga".
+export async function arquivarPedidos(pedidoIds, extra = {}) {
+  const batch = writeBatch(db);
+  pedidoIds.forEach((id) => {
+    batch.update(doc(db, "pedidos", id), { arquivado: true, ...extra });
+  });
+  await batch.commit();
+}

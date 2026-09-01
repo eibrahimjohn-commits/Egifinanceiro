@@ -238,6 +238,7 @@ export default function Pedidos() {
         clienteCidade: cliente.cidade,
         clienteEstado: cliente.estado,
         clienteGrupo: cliente.grupo || "",
+        clienteRepresentante: cliente.representante || "",
         itens: itens.map((it) => ({ valor: Number(it.valor) || 0, data: it.data })),
         valor: valorTotalPedido,
         valorDevido: valorEsperado,
