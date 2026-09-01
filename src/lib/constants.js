@@ -61,14 +61,15 @@ export function formatDate(dateStr) {
 
 // Um pedido em aberto é considerado atrasado se tiver parcela(s) de cheque
 // cuja data já passou (assumindo que ainda não foi baixado).
+// Atraso agora é baseado no Prazo de pagamento do cliente (dias corridos a partir da
+// data do pedido), não mais nas parcelas de cheque — cheque já conta como recebido
+// (fica em Recebidos), então não deve ser motivo de "atraso".
 export function pedidoEstaAtrasado(pedido) {
   if (pedido.status !== "aberto") return false;
-  const hoje = new Date();
-  const formas = pedido.formasPagamento || [];
-  return formas.some((f) => {
-    if (f.tipo !== "cheque" || !f.parcelas) return false;
-    return f.parcelas.some((p) => new Date(p.data + "T00:00:00") < hoje);
-  });
+  const prazoDias = Number(pedido.clientePrazo);
+  if (!prazoDias || prazoDias <= 0) return false; // sem prazo definido, não dá pra avaliar
+  const limite = new Date(new Date(pedido.data + "T00:00:00").getTime() + prazoDias * 86400000);
+  return new Date() > limite;
 }
 
 // Extrai o percentual numérico de um texto livre de desconto, ex: "5% à vista" -> 5

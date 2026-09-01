@@ -21,6 +21,7 @@ const CLIENTE_VAZIO = {
   cnpj: "",
   representante: "",
   descontoPadrao: "",
+  prazo: "",
   cidade: "",
   estado: "",
   grupo: "",
@@ -101,6 +102,7 @@ export default function Pedidos() {
       cnpj: c.cnpj || "",
       representante: c.representante || "",
       descontoPadrao: c.descontoPadrao || "",
+      prazo: c.prazo || "",
       cidade: c.cidade || "",
       estado: c.estado || "",
       grupo: c.grupo || "",
@@ -189,6 +191,7 @@ export default function Pedidos() {
           cnpj: cliente.cnpj,
           representante: cliente.representante,
           descontoPadrao: cliente.descontoPadrao,
+          prazo: cliente.prazo,
           cidade: cliente.cidade,
           estado: cliente.estado,
           grupo: cliente.grupo,
@@ -241,6 +244,7 @@ export default function Pedidos() {
         valorPago,
         data: itens[0]?.data || todayISO(),
         desconto: cliente.descontoPadrao,
+        clientePrazo: cliente.prazo,
         formasPagamento,
       });
 
@@ -346,6 +350,14 @@ export default function Pedidos() {
             <input className="input" value={cliente.descontoPadrao}
               onChange={(e) => atualizarCliente("descontoPadrao", e.target.value)}
               placeholder="Ex: 5% à vista" />
+          </div>
+        </div>
+        <div className="row">
+          <div className="field">
+            <label>Prazo de pagamento (dias)</label>
+            <input className="input" type="number" min="0" value={cliente.prazo}
+              onChange={(e) => atualizarCliente("prazo", e.target.value)}
+              placeholder="Ex: 30" />
           </div>
         </div>
         <div className="row">

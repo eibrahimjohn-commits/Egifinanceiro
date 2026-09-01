@@ -43,7 +43,7 @@ function agruparPorCliente(pedidosDoStatus) {
   return Array.from(grupos.values());
 }
 
-export default function ValesRecebidos() {
+export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const [sub, setSub] = useState("vales");
   const [pedidos, setPedidos] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -73,6 +73,20 @@ export default function ValesRecebidos() {
   }
 
   useEffect(() => { carregar(); }, []);
+
+  // Veio de um clique em "atrasado" nas Análises: abre direto o cliente certo, como se
+  // tivesse clicado nele aqui em Vales.
+  useEffect(() => {
+    if (!alvoAbrir || pedidos.length === 0) return;
+    const chaveAlvo = (alvoAbrir.clienteGrupo || "").trim().toLowerCase() || `cli_${alvoAbrir.clienteId}`;
+    const grupos = agruparPorCliente(pedidos.filter((p) => p.status === "aberto"));
+    const encontrado = grupos.find((g) => g.chave === chaveAlvo);
+    if (encontrado) {
+      setSub("vales");
+      setClienteAberto(encontrado);
+    }
+    onAlvoConsumido?.();
+  }, [alvoAbrir, pedidos]);
 
   function mostrarToast(msg) {
     setToast(msg);
@@ -216,9 +230,11 @@ export default function ValesRecebidos() {
               <div style={{ fontSize: 18, fontWeight: 700 }}>{formatCurrency(totalDevido)}</div>
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Em aberto</div>
+              <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                {saldo < -0.01 ? "Crédito do cliente" : "Em aberto"}
+              </div>
               <div style={{ fontSize: 18, fontWeight: 700, color: saldo > 0.01 ? "var(--red)" : "var(--green)" }}>
-                {formatCurrency(Math.max(saldo, 0))}
+                {saldo < -0.01 ? formatCurrency(-saldo) : formatCurrency(Math.max(saldo, 0))}
               </div>
             </div>
           </div>

@@ -287,6 +287,14 @@ export default function BaseDados() {
                 placeholder="Ex: 5% à vista" />
             </div>
           </div>
+          <div className="row">
+            <div className="field">
+              <label>Prazo de pagamento (dias)</label>
+              <input className="input" type="number" min="0" value={editando.prazo || ""}
+                onChange={(e) => setEditando({ ...editando, prazo: e.target.value })}
+                placeholder="Ex: 30" />
+            </div>
+          </div>
 
           <div className="field">
             <label>Grupo de cliente</label>

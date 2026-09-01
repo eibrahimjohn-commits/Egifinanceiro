@@ -1,15 +1,22 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarPedidos } from "../lib/pedidos";
+import { listarPedidos, importarHistoricoPedidos } from "../lib/pedidos";
 import { listarClientes } from "../lib/clientes";
+import { lerHistoricoPedidos } from "../lib/importarHistorico";
 import { formatCurrency, formatDate, pedidoEstaAtrasado } from "../lib/constants";
 
 const DIAS_INATIVO = 60;
 
-export default function Analises() {
+export default function Analises({ onAbrirNoVales }) {
   const [pedidos, setPedidos] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [carregando, setCarregando] = useState(true);
+
+  const [previewHist, setPreviewHist] = useState(null); // { pedidos, ignoradas, abasEncontradas }
+  const [importandoHist, setImportandoHist] = useState(false);
+  const [progressoHist, setProgressoHist] = useState(null);
+  const [resultadoHist, setResultadoHist] = useState(null);
+  const [mostrarIgnoradas, setMostrarIgnoradas] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -22,6 +29,47 @@ export default function Analises() {
   }, []);
 
   if (carregando) return <div className="empty-state">Carregando análises...</div>;
+
+  async function handleArquivoHistorico(e) {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setResultadoHist(null);
+    try {
+      const resultado = await lerHistoricoPedidos(file);
+      if (resultado.pedidos.length === 0) {
+        setResultadoHist({ erro: "Não encontrei as abas Pranchteta/PAGOS, ou nenhuma linha válida nelas." });
+        return;
+      }
+      setPreviewHist(resultado);
+    } catch (err) {
+      setResultadoHist({ erro: err.message });
+    }
+  }
+
+  async function confirmarImportacaoHistorico() {
+    if (!previewHist) return;
+    setImportandoHist(true);
+    setProgressoHist({ feitos: 0, total: previewHist.pedidos.length });
+    try {
+      const resultado = await importarHistoricoPedidos(
+        previewHist.pedidos,
+        clientes,
+        (feitos, total, clientesCriados) => setProgressoHist({ feitos, total, clientesCriados })
+      );
+      setResultadoHist({ sucesso: true, ...resultado, ignoradas: previewHist.ignoradas.length });
+      setPreviewHist(null);
+      // recarrega pedidos/clientes pra refletir na tela
+      const [p, c] = await Promise.all([listarPedidos(), listarClientes()]);
+      setPedidos(p);
+      setClientes(c);
+    } catch (err) {
+      setResultadoHist({ erro: err.message });
+    } finally {
+      setImportandoHist(false);
+      setProgressoHist(null);
+    }
+  }
 
   const hoje = new Date();
 
@@ -74,7 +122,7 @@ export default function Analises() {
               <div className="empty-state" style={{ padding: 12 }}>Nenhum pagamento atrasado.</div>
             ) : (
               atrasados.map((p) => (
-                <div key={p.id} className="list-item">
+                <div key={p.id} className="list-item" onClick={() => onAbrirNoVales?.(p)}>
                   <div>
                     <strong>{p.clienteNome}</strong>
                     <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
@@ -136,10 +184,80 @@ export default function Analises() {
       </div>
 
       <div className="card">
-        <h2 className="card-title">Importar planilha histórica</h2>
-        <div className="empty-state" style={{ padding: 12 }}>
-          Em breve: upload da sua planilha atual para carga inicial e comparação de dados. Podemos construir essa parte na sequência.
-        </div>
+        <h2 className="card-title">Importar histórico (planilha Pranchteta / PAGOS)</h2>
+
+        {!previewHist && !importandoHist && (
+          <>
+            <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+              Envie o arquivo com as abas "Pranchteta" (contas em aberto) e "PAGOS" (histórico
+              de pedidos já quitados). Vincula automaticamente pelo código do cliente já cadastrado.
+            </p>
+            <label className="btn btn-secondary btn-block" style={{ cursor: "pointer" }}>
+              Escolher arquivo .xlsx
+              <input type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={handleArquivoHistorico} />
+            </label>
+          </>
+        )}
+
+        {importandoHist && (
+          <div className="empty-state">
+            Importando... {progressoHist ? `${progressoHist.feitos}/${progressoHist.total}` : ""}
+            {progressoHist?.clientesCriados > 0 && ` · ${progressoHist.clientesCriados} clientes novos criados`}
+          </div>
+        )}
+
+        {previewHist && !importandoHist && (
+          <>
+            <div style={{ background: "var(--bg)", borderRadius: 12, padding: 12, marginBottom: 12, fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.8 }}>
+              <div>Abas encontradas: <strong style={{ color: "var(--ink)" }}>{previewHist.abasEncontradas.join(", ")}</strong></div>
+              <div>Pedidos a importar: <strong style={{ color: "var(--ink)" }}>{previewHist.pedidos.length}</strong></div>
+              <div>Linhas ignoradas (quebradas): <strong style={{ color: "var(--red)" }}>{previewHist.ignoradas.length}</strong></div>
+            </div>
+
+            {previewHist.ignoradas.length > 0 && (
+              <>
+                <button type="button" className="btn btn-ghost" style={{ marginBottom: 10, fontSize: 13 }}
+                  onClick={() => setMostrarIgnoradas((v) => !v)}>
+                  {mostrarIgnoradas ? "Esconder" : "Ver"} linhas ignoradas
+                </button>
+                {mostrarIgnoradas && (
+                  <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 12 }}>
+                    {previewHist.ignoradas.map((ig, i) => (
+                      <div key={i} style={{ fontSize: 12, color: "var(--ink-soft)", padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
+                        {ig.aba} linha {ig.linha} · {ig.cliente} · {ig.motivo}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-soft)", marginBottom: 4 }}>Prévia:</div>
+            {previewHist.pedidos.slice(0, 5).map((p, i) => (
+              <div key={i} style={{ fontSize: 13, color: "var(--ink-soft)", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                {p.codigo || "(sem cód)"} · {p.nome} · {p.situacao} · {formatCurrency(p.totalPedidos)}
+              </div>
+            ))}
+
+            <div className="row" style={{ marginTop: 14 }}>
+              <button className="btn btn-ghost btn-block" onClick={() => setPreviewHist(null)}>Cancelar</button>
+              <button className="btn btn-primary btn-block" onClick={confirmarImportacaoHistorico}>
+                Importar {previewHist.pedidos.length} pedidos
+              </button>
+            </div>
+          </>
+        )}
+
+        {resultadoHist && (
+          <div className="card" style={{
+            marginTop: 12, background: resultadoHist.erro ? "var(--red-light)" : "var(--green-light)",
+            color: resultadoHist.erro ? "var(--red)" : "#158a45", fontSize: 13,
+          }}>
+            {resultadoHist.erro
+              ? resultadoHist.erro
+              : `${resultadoHist.processados} pedidos importados! ${resultadoHist.clientesCriados} clientes novos criados. ${resultadoHist.ignoradas} linhas ignoradas.`}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import {
   query,
   orderBy,
   serverTimestamp,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
 
@@ -93,4 +94,88 @@ export async function registrarBaixa(pedidoId, pedidoAtual, baixa) {
   });
 
   return novoStatus;
+}
+
+// Importa pedidos do histórico legado (planilha Pranchteta/PAGOS), linkando com
+// clientes já cadastrados por código (ou por nome, se não tiver código) e criando
+// cliente novo quando necessário.
+export async function importarHistoricoPedidos(pedidosParseados, clientesExistentes, onProgresso) {
+  const porCodigo = new Map();
+  const porNome = new Map();
+  clientesExistentes.forEach((c) => {
+    if (c.codigo) porCodigo.set(String(c.codigo).trim(), c);
+    if (c.nome) porNome.set(c.nome.trim().toLowerCase(), c);
+  });
+
+  const CHUNK = 300;
+  let processados = 0;
+  let clientesCriados = 0;
+
+  for (let i = 0; i < pedidosParseados.length; i += CHUNK) {
+    const lote = pedidosParseados.slice(i, i + CHUNK);
+    const batch = writeBatch(db);
+
+    lote.forEach((p) => {
+      const cliente = (p.codigo && porCodigo.get(p.codigo)) || porNome.get(p.nome.toLowerCase());
+      let clienteId, clienteNome, clienteCidade, clienteEstado;
+
+      if (cliente) {
+        clienteId = cliente.id;
+        clienteNome = cliente.nome;
+        clienteCidade = cliente.cidade || "";
+        clienteEstado = cliente.estado || p.uf || "";
+      } else {
+        const novoRef = doc(collection(db, "clientes"));
+        batch.set(novoRef, {
+          codigo: p.codigo || "",
+          nome: p.nome,
+          estado: p.uf || "",
+          representante: p.representante || "",
+          updatedAt: serverTimestamp(),
+        });
+        clienteId = novoRef.id;
+        clienteNome = p.nome;
+        clienteCidade = "";
+        clienteEstado = p.uf || "";
+        const registro = { id: clienteId, codigo: p.codigo, nome: p.nome, cidade: "", estado: p.uf };
+        if (p.codigo) porCodigo.set(p.codigo, registro);
+        porNome.set(p.nome.toLowerCase(), registro);
+        clientesCriados++;
+      }
+
+      const itens = p.itens.length > 0 ? p.itens : [{ valor: p.totalPedidos, data: p.pagamentos[0]?.data || "2020-01-01" }];
+      const valorPago = p.totalPedidos - p.emAberto;
+      const status = p.emAberto <= 0.01 ? "pago" : "aberto";
+      const dataPedido = itens.reduce((min, it) => (it.data < min ? it.data : min), itens[0].data);
+
+      const formasPagamento = p.pagamentos.map((pg) => ({ tipo: "legado", valor: pg.valor, conta: pg.conta }));
+      const pagamentos = p.pagamentos.map((pg) => ({ valor: pg.valor, data: pg.data, formaPagamento: "legado", conta: pg.conta }));
+
+      const pedidoRef = doc(collection(db, "pedidos"));
+      batch.set(pedidoRef, {
+        clienteId,
+        clienteCodigo: p.codigo,
+        clienteNome,
+        clienteCidade,
+        clienteEstado,
+        itens,
+        valor: p.totalPedidos,
+        valorDevido: p.totalPedidos,
+        valorPago,
+        data: dataPedido,
+        desconto: p.situacao.toLowerCase().includes("desc") ? "desconto aplicado (histórico importado)" : "",
+        formasPagamento,
+        pagamentos,
+        status,
+        origemImportacao: { aba: p.aba, linha: p.linha, situacaoOriginal: p.situacao },
+        createdAt: serverTimestamp(),
+      });
+    });
+
+    await batch.commit();
+    processados += lote.length;
+    if (onProgresso) onProgresso(processados, pedidosParseados.length, clientesCriados);
+  }
+
+  return { processados, clientesCriados };
 }
