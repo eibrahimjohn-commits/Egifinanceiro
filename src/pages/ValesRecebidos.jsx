@@ -20,12 +20,12 @@ function montarConta(contaSelecionada, identificacao) {
   return contaSelecionada;
 }
 
-// Padrão de exibição: "Grupo de cliente (Representante)" — se não tiver grupo, usa
-// só o nome do cliente. Se tiver grupo mas não tiver representante, mostra só o grupo.
+// Padrão de exibição: "Nome (Representante)" — usa o Grupo de cliente como nome
+// quando existir, senão usa o nome do cliente. O representante aparece entre
+// parênteses sempre que estiver preenchido, com ou sem grupo.
 function nomeExibicao(g) {
   const nomeBase = g.nomeGrupo || Array.from(g.clientesNomes)[0];
-  if (g.nomeGrupo && g.representante) return `${g.nomeGrupo} (${g.representante})`;
-  return nomeBase;
+  return g.representante ? `${nomeBase} (${g.representante})` : nomeBase;
 }
 
 // Agrupa uma lista qualquer de pedidos por "Grupo de cliente" (ou cliente individual),
