@@ -1,4 +1,5 @@
 import "./Layout.css";
+import ConnectionBadge from "./ConnectionBadge";
 
 const TABS = [
   { id: "pedidos", label: "Pedidos" },
@@ -14,6 +15,7 @@ export default function Layout({ active, onChange, wide, children }) {
     <div className="layout">
       <header className="topbar">
         <span className="brand">EGI <span className="brand-accent">Financeiro</span></span>
+        <ConnectionBadge />
       </header>
       <nav className="tabbar">
         {TABS.map((t) => (

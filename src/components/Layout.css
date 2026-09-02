@@ -8,6 +8,10 @@
   background: linear-gradient(120deg, var(--pink), var(--grape));
   padding: 18px 20px;
   color: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .brand {

@@ -5,6 +5,79 @@ import { listarPedidos } from "../lib/pedidos";
 import { lerPlanilhaClientes } from "../lib/importarPlanilha";
 import { ESTADOS_BR, formatCurrency, formatDate } from "../lib/constants";
 
+// Mesma chave usada em Vales e Recebidos: agrupa pelo campo "Grupo de
+// cliente" (normalizado), e cai para um grupo de 1 (o próprio cliente)
+// quando não tem grupo definido.
+function chaveGrupoCliente(c) {
+  return (c.grupo || "").trim().toLowerCase() || `cli_${c.id}`;
+}
+
+// Padrão de exibição idêntico ao de Vales e Recebidos: "Nome (Representante)",
+// usando o nome do grupo quando existir, senão o nome do primeiro cliente.
+function nomeExibicaoGrupo(g) {
+  const nomeBase = g.nomeGrupo || g.clientes[0]?.nome || "";
+  return g.representante ? `${nomeBase} (${g.representante})` : nomeBase;
+}
+
+// Card de um grupo de clientes — clique no cabeçalho expande e mostra os
+// cadastros individuais (CNPJs) daquele grupo. Hoisted fora do corpo da
+// página para não perder o estado ao re-renderizar a cada tecla do filtro.
+function CardGrupoCliente({ g, expandido, onToggle, onAbrirCliente }) {
+  const badge = g.situacaoAtiva
+    ? { texto: "ATIVA", classe: "badge-pago" }
+    : g.situacaoInativa
+    ? { texto: "INATIVA", classe: "badge-atraso" }
+    : null;
+
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", cursor: "pointer" }} onClick={() => onToggle(g.chave)}>
+        <div>
+          <strong>{nomeExibicaoGrupo(g)}</strong>
+          <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+            {g.clientes.length > 1 ? `${g.clientes.length} CNPJs · ` : ""}
+            {g.cidade ? `${g.cidade}/${g.estado || "—"}` : "cidade não informada"}
+          </div>
+          {g.telefone && (
+            <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>{g.telefone}</div>
+          )}
+          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 2 }}>
+            Última compra: {g.ultimaCompra ? formatDate(g.ultimaCompra) : "sem registro"}
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+          {badge && <span className={"badge " + badge.classe}>{badge.texto}</span>}
+          <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{expandido ? "▲" : "▼"}</span>
+        </div>
+      </div>
+      {expandido && (
+        <div style={{ marginTop: 12 }} onClick={(e) => e.stopPropagation()}>
+          {g.clientes.map((c) => {
+            const situacao = c.infoExtra?.situacaoCadastral;
+            const ativa = situacao?.toUpperCase().includes("ATIVA");
+            return (
+              <div key={c.id} className="list-item" onClick={() => onAbrirCliente(c)}
+                style={{ flexDirection: "column", alignItems: "stretch", gap: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <strong>{c.nome}</strong>
+                  {situacao && (
+                    <span className={"badge " + (ativa ? "badge-pago" : "badge-atraso")} style={{ flexShrink: 0 }}>
+                      {situacao}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                  Cód {c.codigo} · {c.cidade || "—"}/{c.estado || "—"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function BaseDados() {
   const [clientes, setClientes] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -26,6 +99,15 @@ export default function BaseDados() {
   const pararEnriqRef = useRef(false);
   const [analiseDup, setAnaliseDup] = useState(null);
   const [removendoDup, setRemovendoDup] = useState(false);
+  const [gruposExpandidos, setGruposExpandidos] = useState(new Set());
+
+  function toggleGrupoExpandido(chave) {
+    setGruposExpandidos((atual) => {
+      const novo = new Set(atual);
+      if (novo.has(chave)) novo.delete(chave); else novo.add(chave);
+      return novo;
+    });
+  }
 
   async function carregar() {
     setCarregando(true);
@@ -192,38 +274,86 @@ export default function BaseDados() {
 
   const clientesComSituacao = clientes.filter((c) => c.infoExtra?.situacaoCadastral).length;
 
-  const listaFiltrada = clientes
-    .filter((c) => {
-      if (filtroEstado && (c.estado || "").toUpperCase() !== filtroEstado) return false;
-      if (somenteAtivos && !clienteEstaAtivo(c)) return false;
-      if (!filtro) return true;
-      const termo = filtro.toLowerCase().trim();
-      const digitos = filtro.replace(/\D/g, "");
-      const telefones = [...(c.telefones || []), c.whatsapp || ""].join(" ");
-      return (
-        (c.nome || "").toLowerCase().includes(termo) ||
-        (c.razaoSocial || "").toLowerCase().includes(termo) ||
-        (c.codigo || "").toLowerCase().includes(termo) ||
-        (c.cidade || "").toLowerCase().includes(termo) ||
-        (c.representante || "").toLowerCase().includes(termo) ||
-        (digitos.length >= 3 && (c.cnpjDigits || "").includes(digitos)) ||
-        (digitos.length >= 4 && telefones.includes(digitos))
-      );
-    })
-    .sort((a, b) => {
-      const [campo, dir] = ordenacao.split("_");
-      const mult = dir === "asc" ? 1 : -1;
-      if (campo === "nome") return mult * (a.nome || "").localeCompare(b.nome || "", "pt-BR");
-      if (campo === "razaoSocial") return mult * (a.razaoSocial || "").localeCompare(b.razaoSocial || "", "pt-BR");
-      if (campo === "estado") return mult * (a.estado || "").localeCompare(b.estado || "", "pt-BR");
-      if (campo === "cadastro") return mult * (dataCadastroDe(a) - dataCadastroDe(b));
-      if (campo === "ultimaCompra") {
-        const da = new Date(ultimaCompraDe(a) || 0).getTime();
-        const db_ = new Date(ultimaCompraDe(b) || 0).getTime();
-        return mult * (da - db_);
+  const listaFiltrada = clientes.filter((c) => {
+    if (filtroEstado && (c.estado || "").toUpperCase() !== filtroEstado) return false;
+    if (somenteAtivos && !clienteEstaAtivo(c)) return false;
+    if (!filtro) return true;
+    const termo = filtro.toLowerCase().trim();
+    const digitos = filtro.replace(/\D/g, "");
+    const telefones = [...(c.telefones || []), c.whatsapp || ""].join(" ");
+    return (
+      (c.nome || "").toLowerCase().includes(termo) ||
+      (c.razaoSocial || "").toLowerCase().includes(termo) ||
+      (c.codigo || "").toLowerCase().includes(termo) ||
+      (c.cidade || "").toLowerCase().includes(termo) ||
+      (c.representante || "").toLowerCase().includes(termo) ||
+      (c.grupo || "").toLowerCase().includes(termo) ||
+      (digitos.length >= 3 && (c.cnpjDigits || "").includes(digitos)) ||
+      (digitos.length >= 4 && telefones.includes(digitos))
+    );
+  });
+
+  // Agrupa os clientes já filtrados pelo campo "Grupo de cliente" — mesma
+  // lógica usada em Vales e Recebidos. Cada grupo soma cidade/estado,
+  // telefone, representante, situação cadastral (ativo se qualquer CNPJ do
+  // grupo estiver ativo) e a última compra mais recente entre os CNPJs.
+  function agruparClientes(lista) {
+    const grupos = new Map();
+    lista.forEach((c) => {
+      const chave = chaveGrupoCliente(c);
+      if (!grupos.has(chave)) {
+        grupos.set(chave, {
+          chave,
+          nomeGrupo: (c.grupo || "").trim(),
+          clientes: [],
+          representante: "",
+          cidade: "",
+          estado: "",
+          telefone: "",
+          situacaoAtiva: false,
+          situacaoInativa: false,
+          ultimaCompra: "",
+          dataCadastro: 0,
+        });
       }
-      return 0;
+      const g = grupos.get(chave);
+      g.clientes.push(c);
+      if (!g.representante && c.representante) g.representante = c.representante;
+      if (!g.cidade && c.cidade) { g.cidade = c.cidade; g.estado = c.estado; }
+      if (!g.telefone) g.telefone = c.whatsapp || c.telefones?.[0] || c.infoExtra?.telefone || "";
+      const situacao = c.infoExtra?.situacaoCadastral;
+      if (situacao) {
+        if (situacao.toUpperCase().includes("ATIVA")) g.situacaoAtiva = true;
+        else g.situacaoInativa = true;
+      }
+      const ultimoDesteCliente = ultimaCompraDe(c);
+      if (ultimoDesteCliente && (!g.ultimaCompra || new Date(ultimoDesteCliente) > new Date(g.ultimaCompra))) {
+        g.ultimaCompra = ultimoDesteCliente;
+      }
+      const dataCad = dataCadastroDe(c);
+      if (dataCad > g.dataCadastro) g.dataCadastro = dataCad;
     });
+    return Array.from(grupos.values());
+  }
+
+  const gruposFiltrados = agruparClientes(listaFiltrada).sort((a, b) => {
+    const [campo, dir] = ordenacao.split("_");
+    const mult = dir === "asc" ? 1 : -1;
+    if (campo === "nome") return mult * nomeExibicaoGrupo(a).localeCompare(nomeExibicaoGrupo(b), "pt-BR");
+    if (campo === "razaoSocial") {
+      const ra = a.clientes[0]?.razaoSocial || "";
+      const rb = b.clientes[0]?.razaoSocial || "";
+      return mult * ra.localeCompare(rb, "pt-BR");
+    }
+    if (campo === "estado") return mult * (a.estado || "").localeCompare(b.estado || "", "pt-BR");
+    if (campo === "cadastro") return mult * (a.dataCadastro - b.dataCadastro);
+    if (campo === "ultimaCompra") {
+      const da = new Date(a.ultimaCompra || 0).getTime();
+      const db_ = new Date(b.ultimaCompra || 0).getTime();
+      return mult * (da - db_);
+    }
+    return 0;
+  });
 
   if (editando) {
     const info = editando.infoExtra;
@@ -556,7 +686,7 @@ export default function BaseDados() {
       <div className="card">
         <div className="row" style={{ marginBottom: 8 }}>
           <div className="field" style={{ marginBottom: 0, flex: 2 }}>
-          <input className="input" placeholder="Buscar por nome, razão social, código, CNPJ, cidade..."
+          <input className="input" placeholder="Buscar por nome, grupo, razão social, código, CNPJ, cidade..."
             value={filtro} onChange={(e) => setFiltro(e.target.value)} />
           </div>
           <div className="field" style={{ marginBottom: 0, flex: "0 0 110px" }}>
@@ -587,8 +717,8 @@ export default function BaseDados() {
           </button>
         </div>
         <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-          <strong>{clientes.length}</strong> clientes na base
-          {(filtro || filtroEstado || somenteAtivos) && ` · ${listaFiltrada.length} correspondem ao filtro`}
+          <strong>{clientes.length}</strong> clientes na base agrupados em <strong>{gruposFiltrados.length}</strong> cadastro{gruposFiltrados.length === 1 ? "" : "s"}
+          {(filtro || filtroEstado || somenteAtivos) && ` · ${listaFiltrada.length} clientes correspondem ao filtro`}
         </div>
         {somenteAtivos && (
           <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
@@ -600,40 +730,19 @@ export default function BaseDados() {
 
       {carregando ? (
         <div className="empty-state">Carregando clientes...</div>
-      ) : listaFiltrada.length === 0 ? (
+      ) : gruposFiltrados.length === 0 ? (
         <div className="empty-state">Nenhum cliente cadastrado ainda.</div>
       ) : (
-        <div className="clientes-grid">
-        {listaFiltrada.map((c) => {
-          const situacao = c.infoExtra?.situacaoCadastral;
-          const ativa = situacao?.toUpperCase().includes("ATIVA");
-          const ultimoPedido = ultimaCompraDe(c);
-          return (
-            <div key={c.id} className="list-item" onClick={() => setEditando(c)}
-              style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                <strong>{c.nome}</strong>
-                {situacao && (
-                  <span className={"badge " + (ativa ? "badge-pago" : "badge-atraso")}
-                    style={{ flexShrink: 0 }}>
-                    {situacao}
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                Cód {c.codigo} · {c.cidade || "—"}/{c.estado || "—"}
-              </div>
-              {(c.telefones?.[0] || c.whatsapp || c.infoExtra?.telefone) && (
-                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                  {c.whatsapp ? `WhatsApp ${c.whatsapp}` : c.telefones?.[0] || c.infoExtra?.telefone}
-                </div>
-              )}
-              <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                Última compra: {ultimoPedido ? formatDate(ultimoPedido) : "sem registro"}
-              </div>
-            </div>
-          );
-        })}
+        <div className="lista-grid">
+          {gruposFiltrados.map((g) => (
+            <CardGrupoCliente
+              key={g.chave}
+              g={g}
+              expandido={gruposExpandidos.has(g.chave)}
+              onToggle={toggleGrupoExpandido}
+              onAbrirCliente={setEditando}
+            />
+          ))}
         </div>
       )}
     </div>

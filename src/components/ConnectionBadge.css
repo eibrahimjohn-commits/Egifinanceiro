@@ -1,0 +1,47 @@
+.connection-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "Nunito", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.connection-badge-alert {
+  background: rgba(0, 0, 0, 0.18);
+  padding: 5px 10px;
+  border-radius: 999px;
+}
+
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.dot-green {
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-light);
+}
+
+.dot-yellow {
+  background: var(--yellow);
+  animation: connection-pulse 1s ease-in-out infinite;
+}
+
+.dot-red {
+  background: var(--red);
+}
+
+@keyframes connection-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* No topbar (fundo rosa/roxo) o ponto verde "sincronizado" precisa de um
+   contorno claro pra não sumir no gradiente */
+.topbar .dot-green {
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35);
+}
