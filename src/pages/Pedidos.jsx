@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import "../components/ui.css";
-import { buscarCliente, salvarCliente, consultarCnpj } from "../lib/clientes";
+import { buscarCliente, salvarCliente, consultarCnpj, gerarCodigoUnico } from "../lib/clientes";
 import { criarPedido, buscarPendenciasCliente } from "../lib/pedidos";
 import {
   FORMAS_PAGAMENTO,
@@ -185,8 +185,8 @@ export default function Pedidos() {
   async function handleSalvar(e) {
     e.preventDefault();
 
-    if (!cliente.codigo || !cliente.nome) {
-      mostrarToast("Preencha ao menos código e nome do cliente");
+    if (!cliente.nome) {
+      mostrarToast("Preencha ao menos o nome do cliente");
       return;
     }
     if (valorTotalPedido <= 0) {
@@ -196,9 +196,16 @@ export default function Pedidos() {
 
     setSalvando(true);
     try {
+      // Cliente novo sem código (não cadastrado no sistema da empresa) recebe um
+      // código único de 8 dígitos gerado automaticamente.
+      let codigoFinal = cliente.codigo?.trim() || "";
+      if (!codigoFinal && !cliente.id) {
+        codigoFinal = await gerarCodigoUnico();
+      }
+
       const clienteId = await salvarCliente(
         {
-          codigo: cliente.codigo,
+          codigo: codigoFinal,
           nome: cliente.nome,
           razaoSocial: cliente.razaoSocial,
           cnpj: cliente.cnpj,
@@ -246,7 +253,7 @@ export default function Pedidos() {
 
       await criarPedido({
         clienteId,
-        clienteCodigo: cliente.codigo,
+        clienteCodigo: codigoFinal,
         clienteNome: cliente.nome,
         clienteCidade: cliente.cidade,
         clienteEstado: cliente.estado,
@@ -262,7 +269,8 @@ export default function Pedidos() {
         formasPagamento,
       });
 
-      mostrarToast(avisoVale || "Pedido lançado com sucesso!");
+      const avisoCodigo = !cliente.codigo?.trim() && !cliente.id ? ` Código gerado: ${codigoFinal}.` : "";
+      mostrarToast((avisoVale || "Pedido lançado com sucesso!") + avisoCodigo);
       resetTudo();
     } catch (err) {
       mostrarToast("Erro ao salvar: " + err.message);

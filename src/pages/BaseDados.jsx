@@ -404,11 +404,11 @@ export default function BaseDados() {
       {toast && <div className="toast">{toast}</div>}
 
       <div className="ferramentas-grid">
-      <div className="card ferramenta-card">
-        <h2 className="card-title" style={{ fontSize: 15 }}>Importar planilha</h2>
+      <div className={"card ferramenta-card" + (preview || importando ? " ferramenta-expandida" : "")}>
+        <h2 className="card-title">Importar planilha</h2>
         {!preview ? (
           <>
-            <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+            <p className="ferramenta-desc" style={{ color: "var(--ink-soft)", marginBottom: 12 }}>
               Envie um .xlsx com colunas de código, nome, razão social, CNPJ, cidade e UF.
               Clientes com o mesmo código são atualizados, não duplicados.
             </p>
@@ -467,11 +467,11 @@ export default function BaseDados() {
         )}
       </div>
 
-      <div className="card ferramenta-card">
-        <h2 className="card-title" style={{ fontSize: 15 }}>Limpar duplicados</h2>
+      <div className={"card ferramenta-card" + (analiseDup || removendoDup ? " ferramenta-expandida" : "")}>
+        <h2 className="card-title">Limpar duplicados</h2>
         {!analiseDup ? (
           <>
-            <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+            <p className="ferramenta-desc" style={{ color: "var(--ink-soft)", marginBottom: 12 }}>
               Procura clientes repetidos (mesmo código, CNPJ ou nome) e mantém sempre o
               cadastro mais completo. Nada é apagado sem você confirmar.
             </p>
@@ -513,11 +513,11 @@ export default function BaseDados() {
         )}
       </div>
 
-      <div className="card ferramenta-card">
-        <h2 className="card-title" style={{ fontSize: 15 }}>Dados públicos em lote</h2>
+      <div className={"card ferramenta-card" + (enriquecendo ? " ferramenta-expandida" : "")}>
+        <h2 className="card-title">Dados públicos em lote</h2>
         {!enriquecendo ? (
           <>
-            <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+            <p className="ferramenta-desc" style={{ color: "var(--ink-soft)", marginBottom: 12 }}>
               Consulta o CNPJ de cada cliente na base pública e preenche telefone, situação
               cadastral e atividade. Roda devagar (~1,5s por cliente) para respeitar o limite
               da API — pode deixar rodando em segundo plano e parar quando quiser.

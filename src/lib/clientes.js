@@ -20,6 +20,18 @@ export function onlyDigits(str) {
 }
 
 // Busca cliente por código exato, CNPJ (com ou sem máscara) ou nome (parcial, client-side)
+// Gera um código de 8 dígitos garantidamente único, pra clientes lançados direto
+// no pedido sem estarem cadastrados no sistema da empresa (sem código próprio).
+export async function gerarCodigoUnico() {
+  for (let tentativa = 0; tentativa < 8; tentativa++) {
+    const candidato = String(Math.floor(10000000 + Math.random() * 90000000));
+    const snap = await getDocs(query(clientesRef, where("codigo", "==", candidato)));
+    if (snap.empty) return candidato;
+  }
+  // extremamente improvável de chegar aqui, mas garante que nunca trava
+  return String(Date.now()).slice(-8);
+}
+
 export async function buscarCliente(termo) {
   const termoLimpo = (termo || "").trim();
   if (!termoLimpo) return { exact: null, matches: [] };

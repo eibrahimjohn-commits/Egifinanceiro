@@ -185,22 +185,55 @@
   .clientes-grid > .list-item {
     margin-bottom: 0;
   }
+}
 
-  /* Base de Dados: as 3 ferramentas (importar/duplicados/enriquecer) lado a lado, compactas */
-  .ferramentas-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-  }
-  .ferramenta-card {
-    padding: 14px;
-    margin-bottom: 0;
-  }
-  .ferramenta-card p {
-    font-size: 12px !important;
-  }
-  .ferramenta-card .btn {
-    padding: 9px 14px;
-    font-size: 13px;
-  }
+/* Base de Dados: as 3 ferramentas (importar/duplicados/enriquecer) lado a lado,
+   bem compactas — vale em qualquer tamanho de tela, inclusive celular. */
+.ferramentas-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.ferramenta-card {
+  padding: 10px 8px;
+  margin-bottom: 0;
+  text-align: center;
+}
+.ferramenta-card .card-title {
+  font-size: 12px !important;
+  margin-bottom: 8px !important;
+  line-height: 1.25;
+}
+.ferramenta-card .ferramenta-desc {
+  display: none;
+}
+.ferramenta-card .btn {
+  padding: 8px 6px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+@media (min-width: 640px) {
+  .ferramenta-card { padding: 14px; text-align: left; }
+  .ferramenta-card .card-title { font-size: 15px !important; }
+  .ferramenta-card .ferramenta-desc { display: block; font-size: 12px; }
+  .ferramenta-card .btn { padding: 9px 14px; font-size: 13px; }
+}
+
+/* Quando um card de ferramenta tem conteúdo ativo (prévia, progresso...), ele
+   expande pra ocupar a linha inteira, mesmo no celular — só o botão ocioso é compacto. */
+.ferramenta-expandida {
+  grid-column: 1 / -1;
+  text-align: left !important;
+}
+.ferramenta-expandida .card-title {
+  font-size: 15px !important;
+  margin-bottom: 12px !important;
+}
+.ferramenta-expandida .ferramenta-desc {
+  display: block !important;
+  font-size: 13px !important;
+}
+.ferramenta-expandida .btn {
+  font-size: 14px !important;
+  padding: 11px 16px !important;
 }

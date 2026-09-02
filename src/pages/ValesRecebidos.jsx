@@ -20,6 +20,14 @@ function montarConta(contaSelecionada, identificacao) {
   return contaSelecionada;
 }
 
+// Padrão de exibição: "Grupo de cliente (Representante)" — se não tiver grupo, usa
+// só o nome do cliente. Se tiver grupo mas não tiver representante, mostra só o grupo.
+function nomeExibicao(g) {
+  const nomeBase = g.nomeGrupo || Array.from(g.clientesNomes)[0];
+  if (g.nomeGrupo && g.representante) return `${g.nomeGrupo} (${g.representante})`;
+  return nomeBase;
+}
+
 // Agrupa uma lista qualquer de pedidos por "Grupo de cliente" (ou cliente individual),
 // somando valor devido/pago e derivando saldo, percentual, atraso e representante.
 function agruparPorCliente(lista) {
@@ -232,7 +240,7 @@ function CardGrupo({ g, expandido, onToggle, children }) {
     <div className="card" style={{ padding: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", cursor: "pointer" }} onClick={() => onToggle(g.chave)}>
         <div>
-          <strong>{g.nomeGrupo || Array.from(g.clientesNomes)[0]}</strong>
+          <strong>{nomeExibicao(g)}</strong>
           <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
             {g.clientesNomes.size > 1 ? `${g.clientesNomes.size} CNPJs · ` : ""}
             {g.representante ? `Rep: ${g.representante} · ` : ""}
