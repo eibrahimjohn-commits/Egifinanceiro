@@ -4,6 +4,7 @@ import { listarPedidos, importarHistoricoPedidos } from "../lib/pedidos";
 import { listarClientes, registrarContatoInativo } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
 import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo } from "../lib/constants";
+import ClienteCadastroModal from "../components/ClienteCadastroModal";
 
 const DIAS_INATIVO = 60;
 const DIAS_COOLDOWN_CONTATO = 14;
@@ -12,6 +13,9 @@ export default function Analises({ onAbrirNoVales }) {
   const [pedidos, setPedidos] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [carregando, setCarregando] = useState(true);
+  const [modalAberto, setModalAberto] = useState(null); // { clientes, grupoNome }
+  const [ordenacaoInativos, setOrdenacaoInativos] = useState("nome_asc");
+  const [toast, setToast] = useState("");
 
   const [previewHist, setPreviewHist] = useState(null); // { pedidos, ignoradas, abasEncontradas }
   const [importandoHist, setImportandoHist] = useState(false);
@@ -19,15 +23,15 @@ export default function Analises({ onAbrirNoVales }) {
   const [resultadoHist, setResultadoHist] = useState(null);
   const [mostrarIgnoradas, setMostrarIgnoradas] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      setCarregando(true);
-      const [p, c] = await Promise.all([listarPedidos(), listarClientes()]);
-      setPedidos(p);
-      setClientes(c);
-      setCarregando(false);
-    })();
-  }, []);
+  async function carregarTudo() {
+    setCarregando(true);
+    const [p, c] = await Promise.all([listarPedidos(), listarClientes()]);
+    setPedidos(p);
+    setClientes(c);
+    setCarregando(false);
+  }
+
+  useEffect(() => { carregarTudo(); }, []);
 
   if (carregando) return <div className="empty-state">Carregando análises...</div>;
 
@@ -66,9 +70,7 @@ export default function Analises({ onAbrirNoVales }) {
       setResultadoHist({ sucesso: true, ...resultado, ignoradas: previewHist.ignoradas.length });
       setPreviewHist(null);
       // recarrega pedidos/clientes pra refletir na tela
-      const [p, c] = await Promise.all([listarPedidos(), listarClientes()]);
-      setPedidos(p);
-      setClientes(c);
+      await carregarTudo();
     } catch (err) {
       setResultadoHist({ erro: err.message });
     } finally {
@@ -117,6 +119,62 @@ export default function Analises({ onAbrirNoVales }) {
     return true;
   });
 
+  const [campoOrdInativos, dirOrdInativos] = ordenacaoInativos.split("_");
+  const multOrdInativos = dirOrdInativos === "asc" ? 1 : -1;
+  const inativosOrdenados = [...inativos].sort((a, b) => {
+    if (campoOrdInativos === "ultimaCompra") {
+      const da = new Date(ultimaCompraPorCliente[a.id] || a.ultimaCompraPlanilha || 0).getTime();
+      const db_ = new Date(ultimaCompraPorCliente[b.id] || b.ultimaCompraPlanilha || 0).getTime();
+      return multOrdInativos * (da - db_);
+    }
+    if (campoOrdInativos === "mediaCompra") {
+      return multOrdInativos * ((a.mediaCompra || 0) - (b.mediaCompra || 0));
+    }
+    return multOrdInativos * (a.nome || "").localeCompare(b.nome || "", "pt-BR");
+  });
+
+  // Mapa pra resolver o cadastro completo do cliente a partir de um pedido
+  // (o pedido só guarda uma cópia do nome/id no momento da venda).
+  const clientesPorId = {};
+  clientes.forEach((c) => { clientesPorId[c.id] = c; });
+
+  function mostrarToastGenerico(msg) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 3000);
+  }
+
+  function abrirClientePorId(clienteId, clienteNome) {
+    const c = clientesPorId[clienteId];
+    if (!c) {
+      mostrarToastGenerico(`Cadastro de "${clienteNome}" não encontrado na Base de Dados.`);
+      return;
+    }
+    setModalAberto({ clientes: [c] });
+  }
+
+  function abrirCliente(c) {
+    setModalAberto({ clientes: [c] });
+  }
+
+  // Junta todos os telefones do cadastro (principal, alternativo, WhatsApp e
+  // os que vieram da consulta pública de CNPJ), sem duplicar o mesmo número
+  // vindo de fontes diferentes.
+  function telefonesDoCliente(c) {
+    const candidatos = [
+      { numero: c.whatsapp, rotulo: "WhatsApp" },
+      { numero: c.telefones?.[0], rotulo: "Telefone" },
+      { numero: c.telefones?.[1], rotulo: "Telefone alternativo" },
+      ...(c.infoExtra?.telefones || []).map((t) => ({ numero: t, rotulo: "Receita Federal" })),
+    ];
+    const vistos = new Set();
+    return candidatos.filter(({ numero }) => {
+      const digitos = String(numero || "").replace(/\D/g, "");
+      if (digitos.length < 8 || vistos.has(digitos)) return false;
+      vistos.add(digitos);
+      return true;
+    });
+  }
+
   // Heatmap simples por cidade/estado (contagem de pedidos)
   const porCidade = {};
   pedidos.forEach((p) => {
@@ -128,6 +186,8 @@ export default function Analises({ onAbrirNoVales }) {
 
   return (
     <div>
+      {toast && <div className="toast">{toast}</div>}
+
       <div className="card" style={{ border: "2px solid var(--pink)" }}>
         <h2 className="card-title">📤 Importar vales e compras pagas (planilha antiga)</h2>
 
@@ -213,7 +273,8 @@ export default function Analises({ onAbrirNoVales }) {
               <div className="empty-state" style={{ padding: 12 }}>Nenhum pagamento atrasado.</div>
             ) : (
               atrasados.map((p) => (
-                <div key={p.id} className="list-item" onClick={() => onAbrirNoVales?.(p)}>
+                <div key={p.id} className="list-item" onClick={() => onAbrirNoVales?.(p)}
+                  onDoubleClick={() => abrirClientePorId(p.clienteId, p.clienteNome)}>
                   <div>
                     <strong>{p.clienteNome}</strong>
                     <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
@@ -228,27 +289,46 @@ export default function Analises({ onAbrirNoVales }) {
         </div>
 
         <div className="card">
-          <h2 className="card-title">Clientes inativos (+{DIAS_INATIVO} dias, sem pendências)</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 14 }}>
+            <h2 className="card-title" style={{ marginBottom: 0 }}>Clientes inativos (+{DIAS_INATIVO} dias, sem pendências)</h2>
+            <select className="input" style={{ width: "auto", padding: "6px 10px", fontSize: 12 }}
+              value={ordenacaoInativos} onChange={(e) => setOrdenacaoInativos(e.target.value)}>
+              <option value="nome_asc">Nome (A-Z)</option>
+              <option value="nome_desc">Nome (Z-A)</option>
+              <option value="ultimaCompra_desc">Última compra (recente)</option>
+              <option value="ultimaCompra_asc">Última compra (antiga)</option>
+              <option value="mediaCompra_desc">Valor médio (maior)</option>
+              <option value="mediaCompra_asc">Valor médio (menor)</option>
+            </select>
+          </div>
           <div className="analises-col-scroll">
-            {inativos.length === 0 ? (
+            {inativosOrdenados.length === 0 ? (
               <div className="empty-state" style={{ padding: 12 }}>Nenhum cliente inativo no momento.</div>
             ) : (
-              inativos.map((c) => {
-                const telefone = c.telefones?.[0] || c.whatsapp || c.infoExtra?.telefone;
+              inativosOrdenados.map((c) => {
+                const telefones = telefonesDoCliente(c);
                 return (
-                  <div key={c.id} className="list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                  <div key={c.id} className="list-item" onDoubleClick={() => abrirCliente(c)}
+                    style={{ flexDirection: "column", alignItems: "stretch", gap: 6, cursor: "default" }}>
                     <strong>{c.nome}</strong>
                     <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
                       Última compra: {formatDate(ultimaCompraPorCliente[c.id] || c.ultimaCompraPlanilha)}
+                      {c.mediaCompra > 0 && ` · Ticket médio ${formatCurrency(c.mediaCompra)}`}
                     </div>
-                    {telefone && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>📞 {telefone}</span>
-                        <a href={linkWhatsAppInativo(telefone, c.nome)} target="_blank" rel="noopener noreferrer"
-                          className="btn btn-secondary" style={{ fontSize: 12, padding: "4px 10px" }}
-                          onClick={(e) => e.stopPropagation()}>
-                          Mandar mensagem
-                        </a>
+                    {telefones.length > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {telefones.map(({ numero, rotulo }) => (
+                          <div key={numero} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                              📞 {numero} <span style={{ fontSize: 11 }}>({rotulo})</span>
+                            </span>
+                            <a href={linkWhatsAppInativo(numero, c.nome)} target="_blank" rel="noopener noreferrer"
+                              className="btn btn-secondary" style={{ fontSize: 12, padding: "4px 10px" }}
+                              onClick={(e) => e.stopPropagation()}>
+                              Mandar mensagem
+                            </a>
+                          </div>
+                        ))}
                       </div>
                     )}
                     <button className="btn btn-secondary" style={{ fontSize: 12, padding: "6px 10px", alignSelf: "flex-start" }}
@@ -288,6 +368,15 @@ export default function Analises({ onAbrirNoVales }) {
           </div>
         </div>
       </div>
+
+      {modalAberto && (
+        <ClienteCadastroModal
+          clientes={modalAberto.clientes}
+          grupoNome={modalAberto.grupoNome}
+          onClose={() => setModalAberto(null)}
+          onSaved={carregarTudo}
+        />
+      )}
     </div>
   );
 }

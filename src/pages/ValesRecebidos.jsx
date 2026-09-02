@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
 import { listarPedidos, registrarBaixa, confirmarFormaPagamento, arquivarPedidos } from "../lib/pedidos";
+import { listarClientes } from "../lib/clientes";
+import ClienteCadastroModal from "../components/ClienteCadastroModal";
 import {
   formatCurrency, formatDate, todayISO, FORMAS_PAGAMENTO, CONTAS_PADRAO,
   pedidoEstaAtrasado, calcularPercentualAberto, tagResumoCliente, podeMoverParaRecebidos,
@@ -39,6 +41,7 @@ function agruparPorCliente(lista) {
         chave,
         nomeGrupo: (p.clienteGrupo || "").trim(),
         clientesNomes: new Set(),
+        clientesIds: new Set(),
         representante: "",
         pedidos: [],
         totalDevido: 0,
@@ -50,6 +53,7 @@ function agruparPorCliente(lista) {
     const g = grupos.get(chave);
     g.pedidos.push(p);
     g.clientesNomes.add(p.clienteNome);
+    if (p.clienteId) g.clientesIds.add(p.clienteId);
     if (!g.representante && p.clienteRepresentante) g.representante = p.clienteRepresentante;
     g.totalDevido += Number(p.valorDevido ?? p.valor);
     g.totalPago += Number(p.valorPago || 0);
@@ -61,6 +65,18 @@ function agruparPorCliente(lista) {
     const percentual = calcularPercentualAberto(saldo, g.totalDevido);
     return { ...g, saldo, percentual, tag: tagResumoCliente(saldo, percentual, g.atrasado) };
   });
+}
+
+// Estimativa de quanto de um saldo em aberto cai dentro dos próximos 30 dias,
+// proporcional ao prazo de pagamento do pedido: prazo de 30 dias conta o
+// valor integral; prazos maiores contam proporcionalmente (ex: prazo de 90
+// dias conta 1/3 do saldo). Sem prazo definido, considera o valor todo
+// (mais seguro pra previsão do que assumir prazo indefinido).
+function contribuicao30Dias(saldo, prazoDias) {
+  const prazo = Number(prazoDias) || 0;
+  if (prazo <= 0) return saldo;
+  const fator = Math.min(30 / prazo, 1);
+  return saldo * fator;
 }
 
 function CampoConta({ conta, setConta, identificacao, setIdentificacao }) {
@@ -235,10 +251,11 @@ function DetalheExpandido({
   );
 }
 
-function CardGrupo({ g, expandido, onToggle, children }) {
+function CardGrupo({ g, expandido, onToggle, onAbrirGrupo, children }) {
   return (
     <div className="card" style={{ padding: 14 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", cursor: "pointer" }} onClick={() => onToggle(g.chave)}>
+      <div style={{ display: "flex", justifyContent: "space-between", cursor: "pointer" }}
+        onClick={() => onToggle(g.chave)} onDoubleClick={() => onAbrirGrupo?.(g)}>
         <div>
           <strong>{nomeExibicao(g)}</strong>
           <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
@@ -263,7 +280,9 @@ function CardGrupo({ g, expandido, onToggle, children }) {
 export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const [sub, setSub] = useState("vales"); // vales | comissoes | recebidos
   const [pedidos, setPedidos] = useState([]);
+  const [clientes, setClientes] = useState([]);
   const [carregando, setCarregando] = useState(true);
+  const [modalAberto, setModalAberto] = useState(null); // { clientes, grupoNome }
 
   const [filtro, setFiltro] = useState("");
   const [ordenacao, setOrdenacao] = useState("data_desc");
@@ -286,8 +305,9 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
 
   async function carregar() {
     setCarregando(true);
-    const lista = await listarPedidos();
+    const [lista, listaClientes] = await Promise.all([listarPedidos(), listarClientes()]);
     setPedidos(lista);
+    setClientes(listaClientes);
     setCarregando(false);
     return lista;
   }
@@ -317,14 +337,29 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     setConfirmando(null);
   }
 
-  function aplicarFiltroOrdenacao(lista, campoNome, campoData, campoValor) {
+  // Resolve os cadastros reais (com id, cnpj, etc.) dos clientes que
+  // compõem o grupo clicado — os pedidos só guardam uma cópia do nome/id
+  // no momento da venda, então buscamos o cadastro atual pra editar.
+  function abrirGrupo(g) {
+    const encontrados = clientes.filter((c) => g.clientesIds.has(c.id));
+    if (encontrados.length === 0) {
+      mostrarToast("Cadastro do cliente não encontrado na Base de Dados.");
+      return;
+    }
+    setModalAberto({ clientes: encontrados, grupoNome: nomeExibicao(g) });
+  }
+
+  function aplicarFiltroOrdenacao(lista, campoNome, campoData, campoValor, campoPercentual) {
     let out = lista;
     if (filtro.trim()) {
       const f = filtro.toLowerCase();
       out = out.filter((item) => campoNome(item).toLowerCase().includes(f));
     }
     const [campo, dir] = ordenacao.split("_");
+    const mult = dir === "asc" ? 1 : -1;
     out = [...out].sort((a, b) => {
+      if (campo === "nome") return mult * campoNome(a).localeCompare(campoNome(b), "pt-BR");
+      if (campo === "percentual" && campoPercentual) return mult * (campoPercentual(a) - campoPercentual(b));
       const va = campo === "data" ? new Date(campoData(a)) : campoValor(a);
       const vb = campo === "data" ? new Date(campoData(b)) : campoValor(b);
       return dir === "asc" ? va - vb : vb - va;
@@ -337,17 +372,33 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const pedidosVales = pedidosAtivos.filter((p) => !(p.status === "pago" && p.clienteRepresentante));
   const pedidosRecebidos = pedidos.filter((p) => p.arquivado === true);
 
+  // Total geral em aberto e previsão de recebimento nos próximos 30 dias
+  // (valor integral pra prazo de 30 dias, proporcional pra prazos maiores
+  // — ver contribuicao30Dias). Calculado sobre todos os vales, sem levar
+  // em conta o filtro de busca da tela.
+  const totalAReceberGeral = pedidosVales.reduce((soma, p) => {
+    const saldo = Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0);
+    return soma + Math.max(saldo, 0);
+  }, 0);
+  const totalProximos30Dias = pedidosVales.reduce((soma, p) => {
+    const saldo = Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0);
+    if (saldo <= 0) return soma;
+    return soma + contribuicao30Dias(saldo, p.clientePrazo);
+  }, 0);
+
   const gruposVales = aplicarFiltroOrdenacao(
     agruparPorCliente(pedidosVales),
-    (g) => g.nomeGrupo || Array.from(g.clientesNomes).join(", "),
+    (g) => nomeExibicao(g),
     (g) => g.dataMaisRecente,
-    (g) => g.saldo
+    (g) => g.saldo,
+    (g) => g.percentual
   );
   const gruposRecebidos = aplicarFiltroOrdenacao(
     agruparPorCliente(pedidosRecebidos),
-    (g) => g.nomeGrupo || Array.from(g.clientesNomes).join(", "),
+    (g) => nomeExibicao(g),
     (g) => g.dataMaisRecente,
-    (g) => g.totalPago
+    (g) => g.totalPago,
+    (g) => g.percentual
   );
   const comissoesFiltradas = aplicarFiltroOrdenacao(
     pedidosComissao,
@@ -439,16 +490,35 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
           <div className="field" style={{ marginBottom: 0 }}>
             <input className="input" placeholder="Buscar por cliente ou grupo" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
           </div>
-          <div className="field" style={{ marginBottom: 0, flex: "0 0 160px" }}>
+          <div className="field" style={{ marginBottom: 0, flex: "0 0 180px" }}>
             <select className="input" value={ordenacao} onChange={(e) => setOrdenacao(e.target.value)}>
               <option value="data_desc">Data (recente)</option>
               <option value="data_asc">Data (antiga)</option>
               <option value="valor_desc">Valor (maior)</option>
               <option value="valor_asc">Valor (menor)</option>
+              <option value="nome_asc">Nome (A-Z)</option>
+              <option value="nome_desc">Nome (Z-A)</option>
+              <option value="percentual_desc">% em aberto (maior)</option>
+              <option value="percentual_asc">% em aberto (menor)</option>
             </select>
           </div>
         </div>
       </div>
+
+      {sub === "vales" && (
+        <div className="card" style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Total a receber</div>
+            <strong style={{ fontSize: 22 }}>{formatCurrency(totalAReceberGeral)}</strong>
+          </div>
+          <div title="Estimativa: pedidos com prazo de 30 dias entram integralmente; prazos maiores entram proporcionalmente (ex: prazo de 90 dias conta 1/3 do saldo). Pedidos sem prazo definido entram integralmente.">
+            <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+              Previsto p/ próximos 30 dias <span style={{ cursor: "help" }}>ⓘ</span>
+            </div>
+            <strong style={{ fontSize: 22, color: "var(--grape)" }}>{formatCurrency(totalProximos30Dias)}</strong>
+          </div>
+        </div>
+      )}
 
       {carregando && <div className="empty-state">Carregando...</div>}
 
@@ -458,7 +528,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
         ) : (
           <div className="lista-grid">
             {gruposVales.map((g) => (
-              <CardGrupo key={g.chave} g={g} expandido={expandidos.has(g.chave)} onToggle={toggleExpandido}>
+              <CardGrupo key={g.chave} g={g} expandido={expandidos.has(g.chave)} onToggle={toggleExpandido} onAbrirGrupo={abrirGrupo}>
                 <DetalheExpandido
                   g={g}
                   pedidoBaixa={pedidoBaixa} onAbrirBaixa={abrirBaixa} onCancelarBaixa={() => setPedidoBaixa(null)} onConfirmarBaixa={confirmarBaixa}
@@ -510,7 +580,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
         ) : (
           <div className="lista-grid">
             {gruposRecebidos.map((g) => (
-              <CardGrupo key={g.chave} g={{ ...g, tag: { texto: "Pago", classe: "badge-pago" } }} expandido={expandidos.has(g.chave)} onToggle={toggleExpandido}>
+              <CardGrupo key={g.chave} g={{ ...g, tag: { texto: "Pago", classe: "badge-pago" } }} expandido={expandidos.has(g.chave)} onToggle={toggleExpandido} onAbrirGrupo={abrirGrupo}>
                 <DetalheExpandido
                   g={g}
                   pedidoBaixa={null} onAbrirBaixa={() => {}} onCancelarBaixa={() => {}} onConfirmarBaixa={() => {}}
@@ -526,6 +596,15 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
             ))}
           </div>
         )
+      )}
+
+      {modalAberto && (
+        <ClienteCadastroModal
+          clientes={modalAberto.clientes}
+          grupoNome={modalAberto.grupoNome}
+          onClose={() => setModalAberto(null)}
+          onSaved={carregar}
+        />
       )}
     </div>
   );
