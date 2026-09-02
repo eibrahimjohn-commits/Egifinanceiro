@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarPedidos, registrarBaixa, confirmarFormaPagamento, arquivarPedidos } from "../lib/pedidos";
+import { listarPedidos, registrarBaixa, confirmarFormaPagamento, arquivarPedidos, editarItemPedido } from "../lib/pedidos";
 import { listarClientes } from "../lib/clientes";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 import {
   formatCurrency, formatDate, todayISO, FORMAS_PAGAMENTO, CONTAS_PADRAO,
   pedidoEstaAtrasado, calcularPercentualAberto, tagResumoCliente, podeMoverParaRecebidos,
+  calcularParcelasCheque, valorDevidoDoPedido, saldoDoPedido,
 } from "../lib/constants";
 
 const FORMAS_COM_CONTA = ["pix_ted", "deposito"];
@@ -55,7 +56,7 @@ function agruparPorCliente(lista) {
     g.clientesNomes.add(p.clienteNome);
     if (p.clienteId) g.clientesIds.add(p.clienteId);
     if (!g.representante && p.clienteRepresentante) g.representante = p.clienteRepresentante;
-    g.totalDevido += Number(p.valorDevido ?? p.valor);
+    g.totalDevido += valorDevidoDoPedido(p);
     g.totalPago += Number(p.valorPago || 0);
     if (new Date(p.data) > new Date(g.dataMaisRecente)) g.dataMaisRecente = p.data;
     if (pedidoEstaAtrasado(p)) g.atrasado = true;
@@ -108,6 +109,8 @@ function DetalheExpandido({
   pedidoBaixa, onAbrirBaixa, onCancelarBaixa, onConfirmarBaixa,
   valorBaixa, setValorBaixa, dataBaixa, setDataBaixa, formaBaixa, setFormaBaixa,
   contaBaixa, setContaBaixa, contaBaixaId, setContaBaixaId,
+  numFolhasBaixa, setNumFolhasBaixa, prazoUltimoChequeBaixa, setPrazoUltimoChequeBaixa,
+  editandoItem, onAbrirEdicaoItem, onCancelarEdicaoItem, onSalvarEdicaoItem, setValorEditandoItem,
   confirmando, onAbrirConfirmar, onCancelarConfirmar, onConfirmarPixDeposito,
   contaConfirmar, setContaConfirmar, contaConfirmarId, setContaConfirmarId,
   onMoverRecebidos, somenteLeitura,
@@ -116,7 +119,7 @@ function DetalheExpandido({
     .flatMap((p) => (p.pagamentos || []).map((pg) => ({ ...pg, pedidoData: p.data })))
     .sort((a, b) => new Date(b.data) - new Date(a.data));
 
-  const pedidosComSaldo = somenteLeitura ? [] : g.pedidos.filter((p) => (Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0)) > 0.01);
+  const pedidosComSaldo = somenteLeitura ? [] : g.pedidos.filter((p) => saldoDoPedido(p) > 0.01);
 
   return (
     <div style={{ padding: "0 4px 4px" }} onClick={(e) => e.stopPropagation()}>
@@ -131,7 +134,7 @@ function DetalheExpandido({
           <h3 style={{ fontSize: 14, marginBottom: 10 }}>Registrar pagamento</h3>
           {pedidosComSaldo.length === 1 ? (
             <button className="btn btn-primary btn-block" onClick={() => onAbrirBaixa(pedidosComSaldo[0])}>
-              Registrar pagamento de {formatCurrency(Number(pedidosComSaldo[0].valorDevido ?? pedidosComSaldo[0].valor) - Number(pedidosComSaldo[0].valorPago || 0))}
+              Registrar pagamento de {formatCurrency(saldoDoPedido(pedidosComSaldo[0]))}
             </button>
           ) : (
             pedidosComSaldo.map((p) => (
@@ -139,7 +142,7 @@ function DetalheExpandido({
                 <div>
                   <strong>{formatDate(p.data)}</strong>
                   <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                    {formatCurrency(Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0))} em aberto
+                    {formatCurrency(saldoDoPedido(p))} em aberto
                   </div>
                 </div>
                 <span>→</span>
@@ -171,6 +174,32 @@ function DetalheExpandido({
           {FORMAS_COM_CONTA.includes(formaBaixa) && (
             <CampoConta conta={contaBaixa} setConta={setContaBaixa} identificacao={contaBaixaId} setIdentificacao={setContaBaixaId} />
           )}
+          {formaBaixa === "cheque" && (
+            <>
+              <div className="row">
+                <div className="field">
+                  <label>Número de folhas</label>
+                  <input className="input" type="number" min="1" value={numFolhasBaixa}
+                    onChange={(e) => setNumFolhasBaixa(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>Prazo do último cheque</label>
+                  <input className="input" type="date" value={prazoUltimoChequeBaixa}
+                    onChange={(e) => setPrazoUltimoChequeBaixa(e.target.value)} />
+                </div>
+              </div>
+              {valorBaixa && prazoUltimoChequeBaixa && Number(numFolhasBaixa) > 0 && (
+                <div style={{ background: "white", borderRadius: 10, padding: 10, marginBottom: 12 }}>
+                  {calcularParcelasCheque(prazoUltimoChequeBaixa, numFolhasBaixa, valorBaixa).map((p) => (
+                    <div key={p.numero} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
+                      <span>Folha {p.numero} — {formatDate(p.data)}</span>
+                      <strong>{formatCurrency(p.valor)}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
           <div className="row">
             <button type="button" className="btn btn-ghost btn-block" onClick={onCancelarBaixa}>Cancelar</button>
             <button type="button" className="btn btn-primary btn-block" onClick={onConfirmarBaixa}>Confirmar</button>
@@ -180,25 +209,79 @@ function DetalheExpandido({
 
       <div className="card" style={{ background: "var(--bg)" }}>
         <h3 style={{ fontSize: 14, marginBottom: 10 }}>Compras</h3>
-        {g.pedidos.flatMap((p) => (p.itens?.length ? p.itens : [{ valor: p.valor, data: p.data }]).map((it, i) => (
-          <div key={p.id + "_" + i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-            <span>{formatDate(it.data)}</span>
-            <strong>{formatCurrency(it.valor)}</strong>
-          </div>
-        )))}
+        {g.pedidos.flatMap((p) => (p.itens?.length ? p.itens : [{ valor: p.valor, data: p.data }]).map((it, i) => {
+          const editandoEsse = editandoItem?.pedido.id === p.id && editandoItem?.itemIndex === i;
+          return (
+            <div key={p.id + "_" + i} style={{ padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+              {editandoEsse ? (
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <span style={{ fontSize: 13, flexShrink: 0 }}>{formatDate(it.data)}</span>
+                  <input className="input" type="number" step="0.01" autoFocus
+                    style={{ padding: "4px 8px", fontSize: 13 }}
+                    value={editandoItem.valor}
+                    onChange={(e) => setValorEditandoItem(e.target.value)} />
+                  <button type="button" className="btn btn-primary" style={{ padding: "4px 10px", fontSize: 12 }} onClick={onSalvarEdicaoItem}>✓</button>
+                  <button type="button" className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={onCancelarEdicaoItem}>✕</button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
+                  <span>{formatDate(it.data)}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <strong>{formatCurrency(it.valor)}</strong>
+                    {!somenteLeitura && (
+                      <button type="button" className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }}
+                        onClick={() => onAbrirEdicaoItem(p, i, it.valor)} title="Editar valor">✎</button>
+                    )}
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        }))}
       </div>
 
-      {g.pedidos.some((p) => p.formasPagamento?.some((f) => f.tipo === "cheque")) && (
+      {g.pedidos.some((p) => p.historicoEdicoes?.length > 0) && (
         <div className="card" style={{ background: "var(--bg)" }}>
-          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Cheques</h3>
-          {g.pedidos.flatMap((p) => p.formasPagamento?.filter((f) => f.tipo === "cheque").flatMap((f, fi) =>
-            (f.parcelas || []).map((parc) => (
-              <div key={p.id + "_ch_" + fi + "_" + parc.numero} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-                <span>Folha {parc.numero} — {formatDate(parc.data)}</span>
-                <strong>{formatCurrency(parc.valor)}</strong>
+          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Histórico de edições</h3>
+          {g.pedidos.flatMap((p) =>
+            (p.historicoEdicoes || []).map((ed, i) => (
+              <div key={p.id + "_ed_" + i} style={{ fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span>Compra de {formatDate(ed.dataItem)}</span>
+                  <span>{formatDate(ed.data.slice(0, 10))}</span>
+                </div>
+                <div style={{ color: "var(--ink-soft)" }}>
+                  {formatCurrency(ed.valorAnterior)} → <strong style={{ color: "var(--ink)" }}>{formatCurrency(ed.valorNovo)}</strong>
+                </div>
               </div>
             ))
-          ) || [])}
+          )}
+        </div>
+      )}
+
+      {g.pedidos.some((p) =>
+        p.formasPagamento?.some((f) => f.tipo === "cheque") || p.pagamentos?.some((pg) => pg.formaPagamento === "cheque" && pg.parcelas)
+      ) && (
+        <div className="card" style={{ background: "var(--bg)" }}>
+          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Cheques</h3>
+          {g.pedidos.flatMap((p) => [
+            ...(p.formasPagamento?.filter((f) => f.tipo === "cheque").flatMap((f, fi) =>
+              (f.parcelas || []).map((parc) => (
+                <div key={p.id + "_ch_" + fi + "_" + parc.numero} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span>Folha {parc.numero} — {formatDate(parc.data)}</span>
+                  <strong>{formatCurrency(parc.valor)}</strong>
+                </div>
+              ))
+            ) || []),
+            ...(p.pagamentos?.filter((pg) => pg.formaPagamento === "cheque" && pg.parcelas).flatMap((pg, pgi) =>
+              (pg.parcelas || []).map((parc) => (
+                <div key={p.id + "_bx_" + pgi + "_" + parc.numero} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span>Folha {parc.numero} (pagamento) — {formatDate(parc.data)}</span>
+                  <strong>{formatCurrency(parc.valor)}</strong>
+                </div>
+              ))
+            ) || []),
+          ])}
         </div>
       )}
 
@@ -294,6 +377,9 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const [formaBaixa, setFormaBaixa] = useState("pix_ted");
   const [contaBaixa, setContaBaixa] = useState("");
   const [contaBaixaId, setContaBaixaId] = useState("");
+  const [numFolhasBaixa, setNumFolhasBaixa] = useState("1");
+  const [prazoUltimoChequeBaixa, setPrazoUltimoChequeBaixa] = useState("");
+  const [editandoItem, setEditandoItem] = useState(null); // { pedido, itemIndex, valor }
 
   const [confirmando, setConfirmando] = useState(null);
   const [contaConfirmar, setContaConfirmar] = useState("");
@@ -377,11 +463,11 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   // — ver contribuicao30Dias). Calculado sobre todos os vales, sem levar
   // em conta o filtro de busca da tela.
   const totalAReceberGeral = pedidosVales.reduce((soma, p) => {
-    const saldo = Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0);
+    const saldo = saldoDoPedido(p);
     return soma + Math.max(saldo, 0);
   }, 0);
   const totalProximos30Dias = pedidosVales.reduce((soma, p) => {
-    const saldo = Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0);
+    const saldo = saldoDoPedido(p);
     if (saldo <= 0) return soma;
     return soma + contribuicao30Dias(saldo, p.clientePrazo);
   }, 0);
@@ -408,13 +494,15 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   );
 
   function abrirBaixa(pedido) {
-    const saldo = Number(pedido.valorDevido ?? pedido.valor) - Number(pedido.valorPago || 0);
+    const saldo = saldoDoPedido(pedido);
     setPedidoBaixa(pedido);
     setValorBaixa(saldo.toFixed(2));
     setDataBaixa(todayISO());
     setFormaBaixa("pix_ted");
     setContaBaixa("");
     setContaBaixaId("");
+    setNumFolhasBaixa("1");
+    setPrazoUltimoChequeBaixa("");
   }
 
   async function confirmarBaixa() {
@@ -422,14 +510,40 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
       mostrarToast("Informe um valor válido");
       return;
     }
+    const ehCheque = formaBaixa === "cheque";
+    if (ehCheque && (!prazoUltimoChequeBaixa || Number(numFolhasBaixa) < 1)) {
+      mostrarToast("Informe o prazo do último cheque e o número de folhas");
+      return;
+    }
+    const parcelas = ehCheque ? calcularParcelasCheque(prazoUltimoChequeBaixa, numFolhasBaixa, valorBaixa) : null;
     await registrarBaixa(pedidoBaixa.id, pedidoBaixa, {
       valor: Number(valorBaixa),
       data: dataBaixa,
       formaPagamento: formaBaixa,
       conta: FORMAS_COM_CONTA.includes(formaBaixa) ? montarConta(contaBaixa, contaBaixaId) : null,
+      ...(ehCheque ? { numFolhas: Number(numFolhasBaixa), prazoUltimoCheque: prazoUltimoChequeBaixa, parcelas } : {}),
     });
     mostrarToast("Pagamento registrado!");
     setPedidoBaixa(null);
+    carregar();
+  }
+
+  function abrirEdicaoItem(pedido, itemIndex, valorAtual) {
+    setEditandoItem({ pedido, itemIndex, valor: String(valorAtual) });
+  }
+
+  function setValorEditandoItem(valor) {
+    setEditandoItem((atual) => (atual ? { ...atual, valor } : atual));
+  }
+
+  async function salvarEdicaoItem() {
+    if (!editandoItem || !editandoItem.valor || Number(editandoItem.valor) <= 0) {
+      mostrarToast("Informe um valor válido");
+      return;
+    }
+    await editarItemPedido(editandoItem.pedido.id, editandoItem.pedido, editandoItem.itemIndex, Number(editandoItem.valor));
+    mostrarToast("Valor atualizado!");
+    setEditandoItem(null);
     carregar();
   }
 
@@ -534,6 +648,10 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
                   pedidoBaixa={pedidoBaixa} onAbrirBaixa={abrirBaixa} onCancelarBaixa={() => setPedidoBaixa(null)} onConfirmarBaixa={confirmarBaixa}
                   valorBaixa={valorBaixa} setValorBaixa={setValorBaixa} dataBaixa={dataBaixa} setDataBaixa={setDataBaixa}
                   formaBaixa={formaBaixa} setFormaBaixa={setFormaBaixa}
+                  numFolhasBaixa={numFolhasBaixa} setNumFolhasBaixa={setNumFolhasBaixa}
+                  prazoUltimoChequeBaixa={prazoUltimoChequeBaixa} setPrazoUltimoChequeBaixa={setPrazoUltimoChequeBaixa}
+                  editandoItem={editandoItem} onAbrirEdicaoItem={abrirEdicaoItem} onCancelarEdicaoItem={() => setEditandoItem(null)}
+                  onSalvarEdicaoItem={salvarEdicaoItem} setValorEditandoItem={setValorEditandoItem}
                   contaBaixa={contaBaixa} setContaBaixa={setContaBaixa} contaBaixaId={contaBaixaId} setContaBaixaId={setContaBaixaId}
                   confirmando={confirmando} onAbrirConfirmar={abrirConfirmar} onCancelarConfirmar={() => setConfirmando(null)} onConfirmarPixDeposito={confirmarPixDeposito}
                   contaConfirmar={contaConfirmar} setContaConfirmar={setContaConfirmar} contaConfirmarId={contaConfirmarId} setContaConfirmarId={setContaConfirmarId}

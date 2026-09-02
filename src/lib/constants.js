@@ -86,6 +86,25 @@ export function calcularValorDevido(valorBruto, descontoTexto) {
   return Number(valorBruto) * (1 - percent / 100);
 }
 
+// Fonte única de verdade pro "valor total" de um pedido: sempre a soma dos
+// itens (compras) daquele pedido, com o desconto aplicado — nunca um campo
+// solto que possa ficar desatualizado ou divergir do que está listado em
+// "Compras". Pedidos sem itens (não deveria acontecer, mas por segurança)
+// caem pro campo valor/valorDevido gravado.
+export function valorDevidoDoPedido(p) {
+  if (p.itens?.length > 0) {
+    const bruto = p.itens.reduce((s, it) => s + (Number(it.valor) || 0), 0);
+    return calcularValorDevido(bruto, p.desconto);
+  }
+  return Number(p.valorDevido ?? p.valor) || 0;
+}
+
+// Saldo em aberto de um pedido = valor total (soma das compras, já com
+// desconto) - o que já foi pago.
+export function saldoDoPedido(p) {
+  return valorDevidoDoPedido(p) - (Number(p.valorPago) || 0);
+}
+
 export const CONTAS_PADRAO = [
   "Itaú - EGIJJ",
   "Bradesco - EGIJJ",

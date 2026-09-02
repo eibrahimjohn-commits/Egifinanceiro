@@ -10,21 +10,23 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { todayISO } from "./constants";
+import { todayISO, valorDevidoDoPedido, saldoDoPedido, calcularValorDevido } from "./constants";
 
 const pedidosRef = collection(db, "pedidos");
 
 // pedido: { clienteId, clienteCodigo, clienteNome, clienteCidade, clienteEstado,
 //   itens: [{ valor, data }],
-//   valor (soma bruta dos itens), valorDevido (valor - desconto), valorPago (já recebido),
+//   valor (soma bruta dos itens), valorDevido (valor - desconto, sempre recalculado
+//     a partir dos itens — ver valorDevidoDoPedido em lib/constants), valorPago (já recebido),
 //   data (data do lançamento), desconto,
 //   formasPagamento: [{ tipo, valor, ...extras (cheque: numFolhas, prazoUltimoCheque, parcelas) }],
 //   pagamentos: [{ valor, data, formaPagamento, conta? }] (histórico de baixas),
+//   historicoEdicoes: [{ data, itemIndex, dataItem, valorAnterior, valorNovo }],
 //   status: 'aberto' | 'pago', createdAt }
 export async function criarPedido(pedido) {
   const valor = Number(pedido.valor) || 0;
-  const valorDevido = Number(pedido.valorDevido ?? valor);
   const valorPago = Number(pedido.valorPago) || 0;
+  const valorDevido = valorDevidoDoPedido({ ...pedido, valor });
   const payload = {
     ...pedido,
     valor,
@@ -60,7 +62,7 @@ export async function buscarPendenciasCliente({ clienteId, grupo }) {
     .filter((p) => p.status === "aberto")
     .map((p) => ({
       data: p.data,
-      saldo: Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0),
+      saldo: saldoDoPedido(p),
     }))
     .filter((v) => v.saldo > 0.01);
 
@@ -86,7 +88,7 @@ export async function confirmarFormaPagamento(pedidoId, pedidoAtual, formaIndex,
 
   formas[formaIndex] = { ...forma, confirmado: true, conta: conta || null, dataConfirmacao: dataISO };
 
-  const valorDevido = Number(pedidoAtual.valorDevido ?? pedidoAtual.valor);
+  const valorDevido = valorDevidoDoPedido(pedidoAtual);
   const novoValorPago = Number(pedidoAtual.valorPago || 0) + Number(forma.valor);
   const novoStatus = novoValorPago >= valorDevido - 0.01 ? "pago" : "aberto";
 
@@ -96,6 +98,7 @@ export async function confirmarFormaPagamento(pedidoId, pedidoAtual, formaIndex,
   await updateDoc(doc(db, "pedidos", pedidoId), {
     formasPagamento: formas,
     valorPago: novoValorPago,
+    valorDevido,
     status: novoStatus,
     pagamentos: historico,
   });
@@ -105,7 +108,7 @@ export async function confirmarFormaPagamento(pedidoId, pedidoAtual, formaIndex,
 
 // Registra uma baixa (pagamento) em um pedido em aberto
 export async function registrarBaixa(pedidoId, pedidoAtual, baixa) {
-  const valorDevido = Number(pedidoAtual.valorDevido ?? pedidoAtual.valor);
+  const valorDevido = valorDevidoDoPedido(pedidoAtual);
   const novoValorPago = Number(pedidoAtual.valorPago || 0) + Number(baixa.valor);
   const novoStatus = novoValorPago >= valorDevido - 0.01 ? "pago" : "aberto";
 
@@ -115,15 +118,63 @@ export async function registrarBaixa(pedidoId, pedidoAtual, baixa) {
     data: baixa.data,
     formaPagamento: baixa.formaPagamento,
     conta: baixa.conta || null,
+    // Quando o pagamento é em cheque, guarda também as folhas/parcelas
+    // (mesmo formato usado nas formas de pagamento do pedido), pra elas
+    // aparecerem no card "Cheques" e entrarem na checagem de atraso.
+    ...(baixa.numFolhas ? {
+      numFolhas: baixa.numFolhas,
+      prazoUltimoCheque: baixa.prazoUltimoCheque,
+      parcelas: baixa.parcelas,
+    } : {}),
   });
 
   await updateDoc(doc(db, "pedidos", pedidoId), {
     valorPago: novoValorPago,
+    valorDevido,
     status: novoStatus,
     pagamentos: historico,
   });
 
   return novoStatus;
+}
+
+// Edita o valor de um item (uma "compra" avulsa) dentro de um pedido. O
+// valor total e o valor devido são sempre recalculados a partir da soma dos
+// itens (com o desconto do pedido aplicado) — nunca ficam desatualizados.
+// Guarda no próprio pedido um histórico de todas as edições feitas, pra
+// manter rastreabilidade de quem mudou o quê.
+export async function editarItemPedido(pedidoId, pedidoAtual, itemIndex, novoValor) {
+  const itens = [...(pedidoAtual.itens || [])];
+  const itemAtual = itens[itemIndex];
+  if (!itemAtual) throw new Error("Item não encontrado nesse pedido");
+
+  const valorAnterior = Number(itemAtual.valor) || 0;
+  const valorNovo = Number(novoValor) || 0;
+  itens[itemIndex] = { ...itemAtual, valor: valorNovo };
+
+  const valorBruto = itens.reduce((s, it) => s + (Number(it.valor) || 0), 0);
+  const valorDevido = calcularValorDevido(valorBruto, pedidoAtual.desconto);
+  const valorPago = Number(pedidoAtual.valorPago) || 0;
+  const status = valorPago >= valorDevido - 0.01 ? "pago" : "aberto";
+
+  const historicoEdicoes = [...(pedidoAtual.historicoEdicoes || [])];
+  historicoEdicoes.push({
+    data: new Date().toISOString(),
+    itemIndex,
+    dataItem: itemAtual.data,
+    valorAnterior,
+    valorNovo,
+  });
+
+  await updateDoc(doc(db, "pedidos", pedidoId), {
+    itens,
+    valor: valorBruto,
+    valorDevido,
+    status,
+    historicoEdicoes,
+  });
+
+  return { valorBruto, valorDevido, status };
 }
 
 // Importa pedidos do histórico legado (planilha Pranchteta/PAGOS), linkando com
@@ -174,8 +225,16 @@ export async function importarHistoricoPedidos(pedidosParseados, clientesExisten
       }
 
       const itens = p.itens.length > 0 ? p.itens : [{ valor: p.totalPedidos, data: p.pagamentos[0]?.data || "2020-01-01" }];
-      const valorPago = p.totalPedidos - p.emAberto;
-      const status = p.emAberto <= 0.01 ? "pago" : "aberto";
+      const desconto = p.situacao.toLowerCase().includes("desc") ? "desconto aplicado (histórico importado)" : "";
+      // Valor devido e valor pago sempre derivados do que foi de fato
+      // reconstruído (itens/pagamentos) — nunca dos totais soltos da
+      // planilha antiga, pra ficar sempre consistente com o que aparece
+      // nas listas de "Compras" e "Pagamentos" na tela. Os números originais
+      // da planilha ficam guardados em origemImportacao só como referência.
+      const valorBruto = itens.reduce((s, it) => s + (Number(it.valor) || 0), 0);
+      const valorDevido = calcularValorDevido(valorBruto, desconto);
+      const valorPago = p.pagamentos.reduce((s, pg) => s + (Number(pg.valor) || 0), 0);
+      const status = valorPago >= valorDevido - 0.01 ? "pago" : "aberto";
       const dataPedido = itens.reduce((min, it) => (it.data < min ? it.data : min), itens[0].data);
 
       const formasPagamento = p.pagamentos.map((pg) => ({ tipo: "legado", valor: pg.valor, conta: pg.conta }));
@@ -189,15 +248,18 @@ export async function importarHistoricoPedidos(pedidosParseados, clientesExisten
         clienteCidade,
         clienteEstado,
         itens,
-        valor: p.totalPedidos,
-        valorDevido: p.totalPedidos,
+        valor: valorBruto,
+        valorDevido,
         valorPago,
         data: dataPedido,
-        desconto: p.situacao.toLowerCase().includes("desc") ? "desconto aplicado (histórico importado)" : "",
+        desconto,
         formasPagamento,
         pagamentos,
         status,
-        origemImportacao: { aba: p.aba, linha: p.linha, situacaoOriginal: p.situacao },
+        origemImportacao: {
+          aba: p.aba, linha: p.linha, situacaoOriginal: p.situacao,
+          totalPedidosOriginal: p.totalPedidos, emAbertoOriginal: p.emAberto,
+        },
         createdAt: serverTimestamp(),
       });
     });

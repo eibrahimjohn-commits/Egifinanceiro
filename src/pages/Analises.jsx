@@ -3,7 +3,7 @@ import "../components/ui.css";
 import { listarPedidos, importarHistoricoPedidos } from "../lib/pedidos";
 import { listarClientes, registrarContatoInativo } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
-import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo } from "../lib/constants";
+import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido } from "../lib/constants";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 
 const DIAS_INATIVO = 60;
@@ -217,6 +217,16 @@ export default function Analises({ onAbrirNoVales }) {
               <div>Abas encontradas: <strong style={{ color: "var(--ink)" }}>{previewHist.abasEncontradas.join(", ")}</strong></div>
               <div>Pedidos a importar: <strong style={{ color: "var(--ink)" }}>{previewHist.pedidos.length}</strong></div>
               <div>Linhas ignoradas (quebradas): <strong style={{ color: "var(--red)" }}>{previewHist.ignoradas.length}</strong></div>
+              {previewHist.itensComDataImplausivel > 0 && (
+                <div>
+                  Células com data inválida (ex: anos 1900-1902) ignoradas: <strong style={{ color: "var(--yellow)" }}>{previewHist.itensComDataImplausivel}</strong>
+                  <div style={{ fontSize: 12 }}>
+                    Provavelmente erro de formatação na planilha antiga. O valor total do cliente
+                    (coluna "Total Pedidos") não é afetado — só essas linhas específicas do
+                    detalhamento de compras não entram no histórico.
+                  </div>
+                </div>
+              )}
             </div>
 
             {previewHist.ignoradas.length > 0 && (
@@ -278,7 +288,7 @@ export default function Analises({ onAbrirNoVales }) {
                   <div>
                     <strong>{p.clienteNome}</strong>
                     <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                      Pedido em {formatDate(p.data)} · {formatCurrency(Number(p.valorDevido ?? p.valor) - Number(p.valorPago || 0))}
+                      Pedido em {formatDate(p.data)} · {formatCurrency(saldoDoPedido(p))}
                     </div>
                   </div>
                   <span className="badge badge-atraso">Atrasado</span>
