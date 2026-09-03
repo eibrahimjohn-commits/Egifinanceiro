@@ -12,6 +12,10 @@ import {
   calcularParcelasCheque,
   calcularValorDevido,
   podeIrDireitoParaRecebidos,
+  OPCOES_PRAZO,
+  parseDescontoCampos,
+  montarDescontoTexto,
+  descontoAplicavelAoPedido,
 } from "../lib/constants";
 
 const CLIENTE_VAZIO = {
@@ -38,6 +42,8 @@ function novaForma() {
 
 export default function Pedidos() {
   const [cliente, setCliente] = useState(CLIENTE_VAZIO);
+  const [descontoNumero, setDescontoNumero] = useState("");
+  const [descontoCondicao, setDescontoCondicao] = useState("avista");
   const [matches, setMatches] = useState([]);
   const [sugestoesNome, setSugestoesNome] = useState([]);
   const [buscandoCampo, setBuscandoCampo] = useState(null);
@@ -58,6 +64,12 @@ export default function Pedidos() {
 
   function atualizarCliente(campo, valor) {
     setCliente((c) => ({ ...c, [campo]: valor }));
+  }
+
+  function atualizarDesconto(numero, condicao) {
+    setDescontoNumero(numero);
+    setDescontoCondicao(condicao);
+    atualizarCliente("descontoPadrao", montarDescontoTexto(numero, condicao));
   }
 
   // Busca ao sair de código, razão social ou CNPJ
@@ -104,11 +116,14 @@ export default function Pedidos() {
       cnpj: c.cnpj || "",
       representante: c.representante || "",
       descontoPadrao: c.descontoPadrao || "",
-      prazo: c.prazo || "",
+      prazo: c.prazo ?? "",
       cidade: c.cidade || "",
       estado: c.estado || "",
       grupo: c.grupo || "",
     });
+    const { numero, condicao } = parseDescontoCampos(c.descontoPadrao);
+    setDescontoNumero(numero);
+    setDescontoCondicao(condicao);
     setMatches([]);
     setSugestoesNome([]);
     verificarPendencias(c);
@@ -149,6 +164,8 @@ export default function Pedidos() {
 
   function resetTudo() {
     setCliente(CLIENTE_VAZIO);
+    setDescontoNumero("");
+    setDescontoCondicao("avista");
     setMatches([]);
     setSugestoesNome([]);
     setItens([novoItem()]);
@@ -176,7 +193,10 @@ export default function Pedidos() {
   }
 
   const valorTotalPedido = itens.reduce((s, it) => s + (Number(it.valor) || 0), 0);
-  const valorEsperado = calcularValorDevido(valorTotalPedido, cliente.descontoPadrao);
+  // O desconto do cadastro só vale pra esse pedido se a condição bater: "fixo"
+  // sempre vale, "à vista" só se o prazo escolhido aqui for de até 7 dias.
+  const descontoDoPedido = descontoAplicavelAoPedido(cliente.descontoPadrao, cliente.prazo);
+  const valorEsperado = calcularValorDevido(valorTotalPedido, descontoDoPedido);
   const valorAlocado = formas.reduce((s, f) => {
     return s + (f.tipo === "cheque" ? Number(f.valorTotal) || 0 : Number(f.valor) || 0);
   }, 0);
@@ -278,7 +298,7 @@ export default function Pedidos() {
         valorDevido: valorEsperado,
         valorPago,
         data: itens[0]?.data || todayISO(),
-        desconto: cliente.descontoPadrao,
+        desconto: descontoDoPedido,
         clientePrazo: cliente.prazo,
         formasPagamento,
         ...(vaiDireitoParaRecebidos ? { arquivado: true } : {}),
@@ -422,20 +442,41 @@ export default function Pedidos() {
               onChange={(e) => atualizarCliente("representante", e.target.value)} />
           </div>
           <div className="field">
-            <label>Desconto</label>
-            <input className="input" value={cliente.descontoPadrao}
-              onChange={(e) => atualizarCliente("descontoPadrao", e.target.value)}
-              placeholder="Ex: 5% à vista" />
+            <label>Prazo de pagamento</label>
+            <select className="input" value={cliente.prazo ?? ""}
+              onChange={(e) => atualizarCliente("prazo", Number(e.target.value))}>
+              <option value="" disabled>Selecione...</option>
+              {OPCOES_PRAZO.map((o) => <option key={o.dias} value={o.dias}>{o.label}</option>)}
+              {cliente.prazo !== undefined && cliente.prazo !== null && cliente.prazo !== "" &&
+                !OPCOES_PRAZO.some((o) => o.dias === Number(cliente.prazo)) && (
+                  <option value={cliente.prazo}>{cliente.prazo} dias (personalizado)</option>
+              )}
+            </select>
           </div>
         </div>
         <div className="row">
           <div className="field">
-            <label>Prazo de pagamento (dias)</label>
-            <input className="input" type="number" min="0" value={cliente.prazo}
-              onChange={(e) => atualizarCliente("prazo", e.target.value)}
-              placeholder="Ex: 30" />
+            <label>Desconto</label>
+            <input className="input" type="number" step="0.01" min="0" value={descontoNumero}
+              onChange={(e) => atualizarDesconto(e.target.value, descontoCondicao)}
+              placeholder="Ex: 5" />
+          </div>
+          <div className="field">
+            <label>Condição</label>
+            <select className="input" value={descontoCondicao}
+              onChange={(e) => atualizarDesconto(descontoNumero, e.target.value)}>
+              <option value="avista">À vista</option>
+              <option value="fixo">Fixo</option>
+            </select>
           </div>
         </div>
+        {descontoNumero > 0 && (
+          <div style={{ fontSize: 12, color: descontoDoPedido ? "var(--green)" : "var(--yellow)", marginTop: -8, marginBottom: 14 }}>
+            {descontoDoPedido
+              ? `✓ Desconto de ${descontoNumero}% será aplicado nesse pedido.`
+              : `Esse pedido NÃO leva o desconto (condição "à vista" exige prazo de até 7 dias).`}
+          </div>
+        )}
         <div className="row">
           <div className="field">
             <label>Cidade</label>

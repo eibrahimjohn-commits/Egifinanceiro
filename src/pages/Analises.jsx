@@ -361,7 +361,7 @@ export default function Analises({ onAbrirNoVales }) {
                 <div key={p.id} className="list-item" onClick={() => onAbrirNoVales?.(p)}
                   onDoubleClick={() => abrirClientePorId(p.clienteId, p.clienteNome)}>
                   <div>
-                    <strong>{p.clienteNome}</strong>
+                    <strong>{clientesPorId[p.clienteId]?.nome || p.clienteNome}</strong>
                     <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
                       Pedido em {formatDate(p.data)} · {formatCurrency(saldoDoPedido(p))}
                     </div>

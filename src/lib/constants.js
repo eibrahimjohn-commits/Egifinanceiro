@@ -100,6 +100,47 @@ export function calcularValorDevido(valorBruto, descontoTexto) {
   return Number(valorBruto) * (1 - percent / 100);
 }
 
+// Opções fixas de prazo — o valor salvo continua sendo um número de dias
+// (o "prazo final" da condição), pra não quebrar nada que já lê esse campo
+// (atraso, previsão de recebimento em 30 dias etc.)
+export const OPCOES_PRAZO = [
+  { label: "À vista", dias: 0 },
+  { label: "30 dias", dias: 30 },
+  { label: "30 e 60 dias", dias: 60 },
+  { label: "30, 60 e 90 dias", dias: 90 },
+];
+
+// O desconto sempre foi guardado como um texto livre (ex: "5% à vista" ou
+// "5% fixo"), pra não quebrar o parser que já existe (parseDescontoPercent).
+// Essas duas funções só separam a edição em dois campos (número + condição)
+// e remontam esse mesmo formato de texto ao salvar.
+export function parseDescontoCampos(texto) {
+  const match = String(texto || "").match(/([\d]+(?:[.,]\d+)?)\s*%/);
+  const numero = match ? match[1].replace(",", ".") : "";
+  const condicao = /fixo/i.test(texto || "") ? "fixo" : "avista";
+  return { numero, condicao };
+}
+export function montarDescontoTexto(numero, condicao) {
+  if (!numero) return "";
+  return `${numero}% ${condicao === "fixo" ? "fixo" : "à vista"}`;
+}
+
+// Dias limite pra uma condição "à vista" ainda dar direito ao desconto.
+const PRAZO_MAXIMO_DESCONTO_AVISTA = 7;
+
+// Decide se o desconto padrão do cliente vale PRA ESSE pedido específico:
+// - condição "fixo" -> sempre vale.
+// - condição "à vista" -> só vale se o prazo de pagamento usado nesse pedido
+//   for de até 7 dias (ex: cliente escolheu "À vista" no prazo).
+// Retorna o texto de desconto a gravar no pedido — vazio quando não se aplica,
+// pra não gravar um desconto que na prática não valeu dessa vez.
+export function descontoAplicavelAoPedido(descontoPadrao, prazoDias) {
+  const { numero, condicao } = parseDescontoCampos(descontoPadrao);
+  if (!numero) return "";
+  if (condicao === "fixo") return descontoPadrao;
+  return Number(prazoDias) <= PRAZO_MAXIMO_DESCONTO_AVISTA ? descontoPadrao : "";
+}
+
 // Fonte única de verdade pro "valor total" de um pedido: sempre a soma dos
 // itens (compras) daquele pedido, com o desconto aplicado — nunca um campo
 // solto que possa ficar desatualizado ou divergir do que está listado em

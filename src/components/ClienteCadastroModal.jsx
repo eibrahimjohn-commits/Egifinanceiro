@@ -3,33 +3,11 @@ import {
   listarGruposUnicos, salvarCliente, consultarCnpj,
 } from "../lib/clientes";
 import { listarPedidos } from "../lib/pedidos";
-import { ESTADOS_BR, formatCurrency, formatDate } from "../lib/constants";
+import {
+  ESTADOS_BR, formatCurrency, formatDate,
+  OPCOES_PRAZO, parseDescontoCampos, montarDescontoTexto,
+} from "../lib/constants";
 import "./ClienteCadastroModal.css";
-
-// Opções fixas de prazo — o valor salvo continua sendo um número de dias
-// (o "prazo final" da condição), pra não quebrar nada que já lê esse campo
-// (atraso, previsão de recebimento em 30 dias etc.
-const OPCOES_PRAZO = [
-  { label: "À vista", dias: 0 },
-  { label: "30 dias", dias: 30 },
-  { label: "30 e 60 dias", dias: 60 },
-  { label: "30, 60 e 90 dias", dias: 90 },
-];
-
-// O desconto sempre foi guardado como um texto livre (ex: "5% à vista"), pra
-// não quebrar o parser que já existe (parseDescontoPercent). Aqui só
-// separamos a edição em dois campos (número + condição) e remontamos esse
-// mesmo formato de texto ao salvar.
-function parseDescontoCampos(texto) {
-  const match = String(texto || "").match(/([\d]+(?:[.,]\d+)?)\s*%/);
-  const numero = match ? match[1].replace(",", ".") : "";
-  const condicao = /fixo/i.test(texto || "") ? "fixo" : "avista";
-  return { numero, condicao };
-}
-function montarDescontoTexto(numero, condicao) {
-  if (!numero) return "";
-  return `${numero}% ${condicao === "fixo" ? "fixo" : "à vista"}`;
-}
 
 // Popup de cadastro de cliente/grupo, reutilizável em qualquer aba (Vales,
 // Base de Dados, Análises...). Recebe a lista de clientes do grupo que foi
@@ -252,6 +230,13 @@ export default function ClienteCadastroModal({
                 </select>
               </div>
             </div>
+            {descontoNumero > 0 && (
+              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: -8, marginBottom: 14 }}>
+                {descontoCondicao === "fixo"
+                  ? "Fixo: esse desconto vale sempre, em qualquer pedido desse cliente."
+                  : "À vista: esse desconto só entra em pedidos com prazo de até 7 dias. Em prazos maiores, o pedido é lançado sem desconto."}
+              </div>
+            )}
 
             <div className="field">
               <label>Grupo de cliente</label>

@@ -40,14 +40,23 @@ function nomeGrupoOuCliente(g) {
 
 // Agrupa uma lista qualquer de pedidos por "Grupo de cliente" (ou cliente individual),
 // somando valor devido/pago e derivando saldo, percentual, atraso e representante.
-function agruparPorCliente(lista) {
+// Agrupa uma lista qualquer de pedidos por "Grupo de cliente" (ou cliente individual),
+// somando valor devido/pago e derivando saldo, percentual, atraso e representante.
+// `clientesPorId` é o cadastro ATUAL dos clientes — usamos ele (e não a cópia que
+// ficou gravada no pedido no momento da venda) pra grupo/nome/representante nunca
+// ficarem desatualizados se alguém editar o cadastro depois.
+function agruparPorCliente(lista, clientesPorId = {}) {
   const grupos = new Map();
   lista.forEach((p) => {
-    const chave = (p.clienteGrupo || "").trim().toLowerCase() || `cli_${p.clienteId}`;
+    const clienteAtual = clientesPorId[p.clienteId];
+    const grupoAtual = (clienteAtual?.grupo ?? p.clienteGrupo ?? "").trim();
+    const nomeAtual = clienteAtual?.nome || p.clienteNome;
+    const representanteAtual = clienteAtual?.representante || p.clienteRepresentante;
+    const chave = grupoAtual.toLowerCase() || `cli_${p.clienteId}`;
     if (!grupos.has(chave)) {
       grupos.set(chave, {
         chave,
-        nomeGrupo: (p.clienteGrupo || "").trim(),
+        nomeGrupo: grupoAtual,
         clientesNomes: new Set(),
         clientesIds: new Set(),
         representante: "",
@@ -60,9 +69,9 @@ function agruparPorCliente(lista) {
     }
     const g = grupos.get(chave);
     g.pedidos.push(p);
-    g.clientesNomes.add(p.clienteNome);
+    g.clientesNomes.add(nomeAtual);
     if (p.clienteId) g.clientesIds.add(p.clienteId);
-    if (!g.representante && p.clienteRepresentante) g.representante = p.clienteRepresentante;
+    if (!g.representante && representanteAtual) g.representante = representanteAtual;
     g.totalDevido += valorDevidoDoPedido(p);
     g.totalPago += Number(p.valorPago || 0);
     if (new Date(p.data) > new Date(g.dataMaisRecente)) g.dataMaisRecente = p.data;
@@ -468,6 +477,8 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   }
 
   const pedidosAtivos = pedidos.filter((p) => !p.arquivado);
+  const clientesPorId = {};
+  clientes.forEach((c) => { clientesPorId[c.id] = c; });
   const pedidosComissao = pedidosAtivos.filter((p) => p.status === "pago" && p.clienteRepresentante);
   const pedidosVales = pedidosAtivos.filter((p) => !(p.status === "pago" && p.clienteRepresentante));
   const pedidosRecebidos = pedidos.filter((p) => p.arquivado === true);
@@ -487,7 +498,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   }, 0);
 
   const gruposVales = aplicarFiltroOrdenacao(
-    agruparPorCliente(pedidosVales),
+    agruparPorCliente(pedidosVales, clientesPorId),
     (g) => nomeExibicao(g),
     (g) => g.dataMaisRecente,
     (g) => g.saldo,
@@ -495,7 +506,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     (g) => g.representante
   );
   const gruposRecebidos = aplicarFiltroOrdenacao(
-    agruparPorCliente(pedidosRecebidos),
+    agruparPorCliente(pedidosRecebidos, clientesPorId),
     (g) => nomeExibicao(g),
     (g) => g.dataMaisRecente,
     (g) => g.totalPago,
