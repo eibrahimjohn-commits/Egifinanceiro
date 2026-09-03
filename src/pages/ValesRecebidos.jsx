@@ -117,6 +117,7 @@ function DetalheExpandido({
   valorBaixa, setValorBaixa, dataBaixa, setDataBaixa, formaBaixa, setFormaBaixa,
   contaBaixa, setContaBaixa, contaBaixaId, setContaBaixaId,
   numFolhasBaixa, setNumFolhasBaixa, prazoUltimoChequeBaixa, setPrazoUltimoChequeBaixa,
+  descricaoBaixa, setDescricaoBaixa,
   editandoItem, onAbrirEdicaoItem, onCancelarEdicaoItem, onSalvarEdicaoItem, setValorEditandoItem,
   confirmando, onAbrirConfirmar, onCancelarConfirmar, onConfirmarPixDeposito,
   contaConfirmar, setContaConfirmar, contaConfirmarId, setContaConfirmarId,
@@ -180,6 +181,13 @@ function DetalheExpandido({
           </div>
           {FORMAS_COM_CONTA.includes(formaBaixa) && (
             <CampoConta conta={contaBaixa} setConta={setContaBaixa} identificacao={contaBaixaId} setIdentificacao={setContaBaixaId} />
+          )}
+          {formaBaixa === "conta_terceiros" && (
+            <div className="field">
+              <label>De quem é a conta</label>
+              <input className="input" value={descricaoBaixa} onChange={(e) => setDescricaoBaixa(e.target.value)}
+                placeholder="Ex: conta do irmão do cliente, João Silva" />
+            </div>
           )}
           {formaBaixa === "cheque" && (
             <>
@@ -381,6 +389,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const [contaBaixaId, setContaBaixaId] = useState("");
   const [numFolhasBaixa, setNumFolhasBaixa] = useState("1");
   const [prazoUltimoChequeBaixa, setPrazoUltimoChequeBaixa] = useState("");
+  const [descricaoBaixa, setDescricaoBaixa] = useState("");
   const [editandoItem, setEditandoItem] = useState(null); // { pedido, itemIndex, valor }
 
   const [confirmando, setConfirmando] = useState(null);
@@ -512,6 +521,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     setContaBaixaId("");
     setNumFolhasBaixa("1");
     setPrazoUltimoChequeBaixa("");
+    setDescricaoBaixa("");
   }
 
   async function confirmarBaixa() {
@@ -524,6 +534,10 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
       mostrarToast("Informe o prazo do último cheque e o número de folhas");
       return;
     }
+    if (formaBaixa === "conta_terceiros" && !descricaoBaixa.trim()) {
+      mostrarToast("Informe de quem é a conta");
+      return;
+    }
     const parcelas = ehCheque ? calcularParcelasCheque(prazoUltimoChequeBaixa, numFolhasBaixa, valorBaixa) : null;
     await registrarBaixa(pedidoBaixa.id, pedidoBaixa, {
       valor: Number(valorBaixa),
@@ -531,6 +545,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
       formaPagamento: formaBaixa,
       conta: FORMAS_COM_CONTA.includes(formaBaixa) ? montarConta(contaBaixa, contaBaixaId) : null,
       ...(ehCheque ? { numFolhas: Number(numFolhasBaixa), prazoUltimoCheque: prazoUltimoChequeBaixa, parcelas } : {}),
+      ...(formaBaixa === "conta_terceiros" ? { descricao: descricaoBaixa.trim() } : {}),
     });
     mostrarToast("Pagamento registrado!");
     setPedidoBaixa(null);
@@ -661,6 +676,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
                   formaBaixa={formaBaixa} setFormaBaixa={setFormaBaixa}
                   numFolhasBaixa={numFolhasBaixa} setNumFolhasBaixa={setNumFolhasBaixa}
                   prazoUltimoChequeBaixa={prazoUltimoChequeBaixa} setPrazoUltimoChequeBaixa={setPrazoUltimoChequeBaixa}
+                  descricaoBaixa={descricaoBaixa} setDescricaoBaixa={setDescricaoBaixa}
                   editandoItem={editandoItem} onAbrirEdicaoItem={abrirEdicaoItem} onCancelarEdicaoItem={() => setEditandoItem(null)}
                   onSalvarEdicaoItem={salvarEdicaoItem} setValorEditandoItem={setValorEditandoItem}
                   contaBaixa={contaBaixa} setContaBaixa={setContaBaixa} contaBaixaId={contaBaixaId} setContaBaixaId={setContaBaixaId}

@@ -9,9 +9,23 @@ export const FORMAS_PAGAMENTO = [
 ];
 
 // Formas que são creditadas imediatamente como recebidas ao lançar o pedido
-// (cheque conta como recebido pois já está fisicamente em mãos, mesmo com data futura).
-// Todas as outras ficam em aberto (Vales) até serem conferidas/baixadas.
-export const FORMAS_RECEBIMENTO_IMEDIATO = ["dinheiro", "cheque"];
+// (cheque conta como recebido pois já está fisicamente em mãos, mesmo com data
+// futura; conta de 3º também, pois já entrou o dinheiro, só precisa saber de quem).
+// PIX/TED e Depósito ficam de fora — precisam de conferência no extrato antes de
+// contar como recebido, por isso sempre passam por Vales primeiro.
+export const FORMAS_RECEBIMENTO_IMEDIATO = ["dinheiro", "cheque", "conta_terceiros"];
+
+// Formas que precisam de confirmação futura (checar no extrato) antes de
+// contar como realmente recebidas — nunca vão direto pra Recebidos.
+export const FORMAS_QUE_PRECISAM_CONFIRMACAO = ["pix_ted", "deposito"];
+
+// Um pedido recém-lançado pode ir direto pra Recebidos (sem passar por Vales)
+// quando: sobrou 5% ou menos em aberto E nenhuma das formas de pagamento usadas
+// é PIX/Depósito (essas sempre precisam de confirmação futura no extrato).
+export function podeIrDireitoParaRecebidos(percentualAberto, formasPagamento) {
+  const temFormaQuePrecisaConfirmar = formasPagamento.some((f) => FORMAS_QUE_PRECISAM_CONFIRMACAO.includes(f.tipo));
+  return percentualAberto <= 5.0001 && !temFormaQuePrecisaConfirmar;
+}
 
 // Divide um valor total em N parcelas iguais, ajustando centavos na última parcela.
 export function dividirValorIgualmente(valorTotal, numParcelas) {

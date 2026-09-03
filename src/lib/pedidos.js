@@ -118,6 +118,7 @@ export async function registrarBaixa(pedidoId, pedidoAtual, baixa) {
     data: baixa.data,
     formaPagamento: baixa.formaPagamento,
     conta: baixa.conta || null,
+    ...(baixa.descricao ? { descricao: baixa.descricao } : {}),
     // Quando o pagamento é em cheque, guarda também as folhas/parcelas
     // (mesmo formato usado nas formas de pagamento do pedido), pra elas
     // aparecerem no card "Cheques" e entrarem na checagem de atraso.

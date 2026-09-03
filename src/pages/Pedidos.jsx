@@ -11,6 +11,7 @@ import {
   formatDate,
   calcularParcelasCheque,
   calcularValorDevido,
+  podeIrDireitoParaRecebidos,
 } from "../lib/constants";
 
 const CLIENTE_VAZIO = {
@@ -193,6 +194,11 @@ export default function Pedidos() {
       mostrarToast("Informe ao menos um valor de pedido");
       return;
     }
+    const formaContaTerceirosSemDescricao = formas.find((f) => f.tipo === "conta_terceiros" && !f.descricao?.trim());
+    if (formaContaTerceirosSemDescricao) {
+      mostrarToast("Informe de quem é a conta em 'Conta de 3º'");
+      return;
+    }
 
     setSalvando(true);
     try {
@@ -232,7 +238,7 @@ export default function Pedidos() {
               parcelas,
             };
           }
-          return { tipo: f.tipo, valor: Number(f.valor) };
+          return { tipo: f.tipo, valor: Number(f.valor), ...(f.tipo === "conta_terceiros" ? { descricao: f.descricao || "" } : {}) };
         });
 
       // Reconciliação automática: se o alocado não bater com (valor - desconto),
@@ -251,6 +257,14 @@ export default function Pedidos() {
         .filter((f) => FORMAS_RECEBIMENTO_IMEDIATO.includes(f.tipo))
         .reduce((s, f) => s + f.valor, 0);
 
+      // Se sobrou 5% ou menos em aberto e nenhuma forma usada precisa de
+      // confirmação futura (PIX/Depósito), o pedido já nasce em Recebidos —
+      // não precisa passar por Vales. Isso só vale no momento do lançamento;
+      // uma vez em Vales, mover pra Recebidos continua sendo manual.
+      const abertoNoLancamento = valorEsperado - valorPago;
+      const percentualAbertoNoLancamento = valorEsperado > 0 ? (abertoNoLancamento / valorEsperado) * 100 : 0;
+      const vaiDireitoParaRecebidos = podeIrDireitoParaRecebidos(percentualAbertoNoLancamento, formasPagamento);
+
       await criarPedido({
         clienteId,
         clienteCodigo: codigoFinal,
@@ -267,10 +281,12 @@ export default function Pedidos() {
         desconto: cliente.descontoPadrao,
         clientePrazo: cliente.prazo,
         formasPagamento,
+        ...(vaiDireitoParaRecebidos ? { arquivado: true } : {}),
       });
 
       const avisoCodigo = !cliente.codigo?.trim() && !cliente.id ? ` Código gerado: ${codigoFinal}.` : "";
-      mostrarToast((avisoVale || "Pedido lançado com sucesso!") + avisoCodigo);
+      const avisoRecebidos = vaiDireitoParaRecebidos ? " Já foi direto pra Recebidos (pago à vista)." : "";
+      mostrarToast((avisoVale || "Pedido lançado com sucesso!") + avisoRecebidos + avisoCodigo);
       resetTudo();
     } catch (err) {
       mostrarToast("Erro ao salvar: " + err.message);
@@ -505,6 +521,15 @@ export default function Pedidos() {
                   onClick={() => removeForma(i)}>✕</button>
               )}
             </div>
+
+            {f.tipo === "conta_terceiros" && (
+              <div className="field">
+                <label>De quem é a conta</label>
+                <input className="input" value={f.descricao || ""}
+                  onChange={(e) => updateForma(i, "descricao", e.target.value)}
+                  placeholder="Ex: conta do irmão do cliente, João Silva" />
+              </div>
+            )}
 
             {f.tipo === "cheque" && (
               <>
