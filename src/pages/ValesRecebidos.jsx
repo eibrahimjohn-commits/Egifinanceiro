@@ -31,6 +31,13 @@ function nomeExibicao(g) {
   return g.representante ? `${nomeBase} (${g.representante})` : nomeBase;
 }
 
+// Só o nome do grupo (ou do cliente, se não tiver grupo), sem o representante
+// junto — usado no título do card, que agora leva o representante numa
+// linha separada.
+function nomeGrupoOuCliente(g) {
+  return g.nomeGrupo || Array.from(g.clientesNomes)[0];
+}
+
 // Agrupa uma lista qualquer de pedidos por "Grupo de cliente" (ou cliente individual),
 // somando valor devido/pago e derivando saldo, percentual, atraso e representante.
 function agruparPorCliente(lista) {
@@ -340,14 +347,9 @@ function CardGrupo({ g, expandido, onToggle, onAbrirGrupo, children }) {
       <div style={{ display: "flex", justifyContent: "space-between", cursor: "pointer" }}
         onClick={() => onToggle(g.chave)} onDoubleClick={() => onAbrirGrupo?.(g)}>
         <div>
-          <strong>{nomeExibicao(g)}</strong>
-          <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-            {g.clientesNomes.size > 1 ? `${g.clientesNomes.size} CNPJs · ` : ""}
-            {g.representante ? `Rep: ${g.representante} · ` : ""}
-            {formatDate(g.dataMaisRecente)}
-          </div>
+          <strong>{nomeGrupoOuCliente(g)} - {formatCurrency(g.saldo)}</strong>
           <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 2 }}>
-            {formatCurrency(g.saldo)} em aberto · {g.percentual.toFixed(1)}%
+            {[g.representante, formatDate(g.dataMaisRecente), `${g.percentual.toFixed(1)}%`].filter(Boolean).join(" - ")}
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
@@ -435,7 +437,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     setModalAberto({ clientes: encontrados, grupoNome: nomeExibicao(g) });
   }
 
-  function aplicarFiltroOrdenacao(lista, campoNome, campoData, campoValor, campoPercentual) {
+  function aplicarFiltroOrdenacao(lista, campoNome, campoData, campoValor, campoPercentual, campoRepresentante) {
     let out = lista;
     if (filtro.trim()) {
       const f = filtro.toLowerCase();
@@ -446,6 +448,9 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     out = [...out].sort((a, b) => {
       if (campo === "nome") return mult * campoNome(a).localeCompare(campoNome(b), "pt-BR");
       if (campo === "percentual" && campoPercentual) return mult * (campoPercentual(a) - campoPercentual(b));
+      if (campo === "representante" && campoRepresentante) {
+        return mult * (campoRepresentante(a) || "").localeCompare(campoRepresentante(b) || "", "pt-BR");
+      }
       const va = campo === "data" ? new Date(campoData(a)) : campoValor(a);
       const vb = campo === "data" ? new Date(campoData(b)) : campoValor(b);
       return dir === "asc" ? va - vb : vb - va;
@@ -477,20 +482,24 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     (g) => nomeExibicao(g),
     (g) => g.dataMaisRecente,
     (g) => g.saldo,
-    (g) => g.percentual
+    (g) => g.percentual,
+    (g) => g.representante
   );
   const gruposRecebidos = aplicarFiltroOrdenacao(
     agruparPorCliente(pedidosRecebidos),
     (g) => nomeExibicao(g),
     (g) => g.dataMaisRecente,
     (g) => g.totalPago,
-    (g) => g.percentual
+    (g) => g.percentual,
+    (g) => g.representante
   );
   const comissoesFiltradas = aplicarFiltroOrdenacao(
     pedidosComissao,
     (p) => p.clienteNome,
     (p) => p.data,
-    (p) => p.valor
+    (p) => p.valor,
+    null,
+    (p) => p.clienteRepresentante
   );
 
   function abrirBaixa(pedido) {
@@ -614,6 +623,8 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
               <option value="nome_desc">Nome (Z-A)</option>
               <option value="percentual_desc">% em aberto (maior)</option>
               <option value="percentual_asc">% em aberto (menor)</option>
+              <option value="representante_asc">Representante (A-Z)</option>
+              <option value="representante_desc">Representante (Z-A)</option>
             </select>
           </div>
         </div>

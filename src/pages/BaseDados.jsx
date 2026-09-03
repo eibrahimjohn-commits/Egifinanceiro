@@ -487,34 +487,30 @@ export default function BaseDados() {
       </div>
 
       <div className="card">
-        <div className="row" style={{ marginBottom: 8 }}>
-          <div className="field" style={{ marginBottom: 0, flex: 2 }}>
+        <div className="field" style={{ marginBottom: 10 }}>
           <input className="input" placeholder="Buscar por nome, grupo, razão social, código, CNPJ, cidade..."
             value={filtro} onChange={(e) => setFiltro(e.target.value)} />
-          </div>
-          <div className="field" style={{ marginBottom: 0, flex: "0 0 110px" }}>
-            <select className="input" value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
-              <option value="">Todos UF</option>
-              {estadosPresentes.map((uf) => <option key={uf} value={uf}>{uf}</option>)}
-            </select>
-          </div>
-          <div className="field" style={{ marginBottom: 0, flex: "0 0 180px" }}>
-            <select className="input" value={ordenacao} onChange={(e) => setOrdenacao(e.target.value)}>
-              <option value="nome_asc">Nome (A-Z)</option>
-              <option value="nome_desc">Nome (Z-A)</option>
-              <option value="razaoSocial_asc">Razão social (A-Z)</option>
-              <option value="estado_asc">Estado (A-Z)</option>
-              <option value="cadastro_desc">Cadastro (recente)</option>
-              <option value="cadastro_asc">Cadastro (antigo)</option>
-              <option value="ultimaCompra_desc">Última compra (recente)</option>
-              <option value="ultimaCompra_asc">Última compra (antiga)</option>
-            </select>
-          </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 0, fontSize: 13, whiteSpace: "nowrap", cursor: "pointer" }}>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 8 }}>
+          <select className="input" style={{ flex: "1 1 110px" }} value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
+            <option value="">Todos UF</option>
+            {estadosPresentes.map((uf) => <option key={uf} value={uf}>{uf}</option>)}
+          </select>
+          <select className="input" style={{ flex: "1 1 170px" }} value={ordenacao} onChange={(e) => setOrdenacao(e.target.value)}>
+            <option value="nome_asc">Nome (A-Z)</option>
+            <option value="nome_desc">Nome (Z-A)</option>
+            <option value="razaoSocial_asc">Razão social (A-Z)</option>
+            <option value="estado_asc">Estado (A-Z)</option>
+            <option value="cadastro_desc">Cadastro (recente)</option>
+            <option value="cadastro_asc">Cadastro (antigo)</option>
+            <option value="ultimaCompra_desc">Última compra (recente)</option>
+            <option value="ultimaCompra_asc">Última compra (antiga)</option>
+          </select>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, whiteSpace: "nowrap", cursor: "pointer", flex: "1 1 140px" }}>
             <input type="checkbox" checked={somenteAtivos} onChange={(e) => setSomenteAtivos(e.target.checked)} />
             Só CNPJ ativo
           </label>
-          <button className="btn btn-primary" style={{ whiteSpace: "nowrap" }}
+          <button className="btn btn-primary" style={{ whiteSpace: "nowrap", flex: "1 1 100px" }}
             onClick={() => setModalAberto({ novo: true })}>
             + Novo
           </button>

@@ -86,7 +86,10 @@ export default async function handler(req, res) {
   // A API só aceita filtrar por CNPJ ou localização (confirmado por teste real) —
   // não filtra por CNAE. Então buscamos várias páginas da cidade em paralelo e
   // filtramos o ramo de atividade aqui.
-  const PAGINAS_PARALELAS = 6;
+  // Reduzido de 6 pra 3 páginas simultâneas: se a Base Empresarial estiver
+  // limitando por taxa de requisições (rate limit), poucas chamadas ao mesmo
+  // tempo reduzem a chance de disparar isso.
+  const PAGINAS_PARALELAS = 3;
   const PER_PAGE = 100;
 
   const paginaInicial = Math.max(1, parseInt(pagina, 10) || 1);
@@ -109,9 +112,19 @@ export default async function handler(req, res) {
     const respostas = await Promise.allSettled(
       paginas.map(async (p) => {
         const r = await fetch(montarUrl(p), { headers: { Accept: "application/json" } });
-        const json = await r.json();
+        const textoBruto = await r.text();
+        let json;
+        try {
+          json = textoBruto ? JSON.parse(textoBruto) : {};
+        } catch {
+          // A resposta não veio em JSON (ex: página de erro em HTML) — guarda
+          // o início do texto bruto pra dar uma pista melhor do que houve.
+          const erro = new Error(`Resposta inesperada da Base Empresarial (status ${r.status}, não é JSON).`);
+          erro.detalhe = { status: r.status, trechoResposta: textoBruto.slice(0, 300) };
+          throw erro;
+        }
         if (!r.ok) {
-          const erro = new Error(json?.message || `Falha na página ${p} (${r.status})`);
+          const erro = new Error(`(HTTP ${r.status}) ` + (json?.message || `Falha na página ${p}`));
           erro.detalhe = json;
           throw erro;
         }

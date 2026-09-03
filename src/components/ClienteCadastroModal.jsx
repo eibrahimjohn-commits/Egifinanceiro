@@ -6,6 +6,31 @@ import { listarPedidos } from "../lib/pedidos";
 import { ESTADOS_BR, formatCurrency, formatDate } from "../lib/constants";
 import "./ClienteCadastroModal.css";
 
+// Opções fixas de prazo — o valor salvo continua sendo um número de dias
+// (o "prazo final" da condição), pra não quebrar nada que já lê esse campo
+// (atraso, previsão de recebimento em 30 dias etc.
+const OPCOES_PRAZO = [
+  { label: "À vista", dias: 0 },
+  { label: "30 dias", dias: 30 },
+  { label: "30 e 60 dias", dias: 60 },
+  { label: "30, 60 e 90 dias", dias: 90 },
+];
+
+// O desconto sempre foi guardado como um texto livre (ex: "5% à vista"), pra
+// não quebrar o parser que já existe (parseDescontoPercent). Aqui só
+// separamos a edição em dois campos (número + condição) e remontamos esse
+// mesmo formato de texto ao salvar.
+function parseDescontoCampos(texto) {
+  const match = String(texto || "").match(/([\d]+(?:[.,]\d+)?)\s*%/);
+  const numero = match ? match[1].replace(",", ".") : "";
+  const condicao = /fixo/i.test(texto || "") ? "fixo" : "avista";
+  return { numero, condicao };
+}
+function montarDescontoTexto(numero, condicao) {
+  if (!numero) return "";
+  return `${numero}% ${condicao === "fixo" ? "fixo" : "à vista"}`;
+}
+
 // Popup de cadastro de cliente/grupo, reutilizável em qualquer aba (Vales,
 // Base de Dados, Análises...). Recebe a lista de clientes do grupo que foi
 // clicado (1 item = cliente avulso, vários = grupo com múltiplos CNPJs).
@@ -28,8 +53,24 @@ export default function ClienteCadastroModal({
   const [salvando, setSalvando] = useState(false);
   const [toast, setToast] = useState("");
   const [historico, setHistorico] = useState(null); // { ultimaCompra }
+  const [descontoNumero, setDescontoNumero] = useState("");
+  const [descontoCondicao, setDescontoCondicao] = useState("avista");
 
   useEffect(() => { listarGruposUnicos().then(setGrupos); }, []);
+
+  // Toda vez que troca de cliente sendo editado, quebra o texto livre de
+  // desconto (ex: "5% à vista") nos dois campos separados do formulário.
+  useEffect(() => {
+    const { numero, condicao } = parseDescontoCampos(editando?.descontoPadrao);
+    setDescontoNumero(numero);
+    setDescontoCondicao(condicao);
+  }, [editando?.id]);
+
+  function atualizarDesconto(numero, condicao) {
+    setDescontoNumero(numero);
+    setDescontoCondicao(condicao);
+    setEditando((c) => ({ ...c, descontoPadrao: montarDescontoTexto(numero, condicao) }));
+  }
 
   // Busca a última compra desse cliente sob demanda (só quando entra na
   // edição de um cliente já existente) — evita carregar pedidos à toa
@@ -183,18 +224,32 @@ export default function ClienteCadastroModal({
                   onChange={(e) => setEditando({ ...editando, representante: e.target.value })} />
               </div>
               <div className="field">
-                <label>Desconto padrão</label>
-                <input className="input" value={editando.descontoPadrao || ""}
-                  onChange={(e) => setEditando({ ...editando, descontoPadrao: e.target.value })}
-                  placeholder="Ex: 5% à vista" />
+                <label>Prazo de pagamento</label>
+                <select className="input" value={editando.prazo ?? ""}
+                  onChange={(e) => setEditando({ ...editando, prazo: Number(e.target.value) })}>
+                  <option value="" disabled>Selecione...</option>
+                  {OPCOES_PRAZO.map((o) => <option key={o.dias} value={o.dias}>{o.label}</option>)}
+                  {editando.prazo !== undefined && editando.prazo !== null && editando.prazo !== "" &&
+                    !OPCOES_PRAZO.some((o) => o.dias === Number(editando.prazo)) && (
+                      <option value={editando.prazo}>{editando.prazo} dias (personalizado)</option>
+                  )}
+                </select>
               </div>
             </div>
             <div className="row">
               <div className="field">
-                <label>Prazo de pagamento (dias)</label>
-                <input className="input" type="number" min="0" value={editando.prazo || ""}
-                  onChange={(e) => setEditando({ ...editando, prazo: e.target.value })}
-                  placeholder="Ex: 30" />
+                <label>Desconto</label>
+                <input className="input" type="number" step="0.01" min="0" value={descontoNumero}
+                  onChange={(e) => atualizarDesconto(e.target.value, descontoCondicao)}
+                  placeholder="Ex: 5" />
+              </div>
+              <div className="field">
+                <label>Condição</label>
+                <select className="input" value={descontoCondicao}
+                  onChange={(e) => atualizarDesconto(descontoNumero, e.target.value)}>
+                  <option value="avista">À vista</option>
+                  <option value="fixo">Fixo</option>
+                </select>
               </div>
             </div>
 

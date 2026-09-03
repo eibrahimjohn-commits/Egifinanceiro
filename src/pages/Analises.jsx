@@ -15,6 +15,15 @@ export default function Analises({ onAbrirNoVales }) {
   const [carregando, setCarregando] = useState(true);
   const [modalAberto, setModalAberto] = useState(null); // { clientes, grupoNome }
   const [ordenacaoInativos, setOrdenacaoInativos] = useState("nome_asc");
+  const [expandidosInativos, setExpandidosInativos] = useState(new Set());
+
+  function toggleExpandidoInativo(chave) {
+    setExpandidosInativos((atual) => {
+      const novo = new Set(atual);
+      if (novo.has(chave)) novo.delete(chave); else novo.add(chave);
+      return novo;
+    });
+  }
   const [toast, setToast] = useState("");
 
   const [previewHist, setPreviewHist] = useState(null); // { pedidos, ignoradas, abasEncontradas }
@@ -22,6 +31,7 @@ export default function Analises({ onAbrirNoVales }) {
   const [progressoHist, setProgressoHist] = useState(null);
   const [resultadoHist, setResultadoHist] = useState(null);
   const [mostrarIgnoradas, setMostrarIgnoradas] = useState(false);
+  const [mostrarImportarHist, setMostrarImportarHist] = useState(false);
 
   async function carregarTudo() {
     setCarregando(true);
@@ -121,17 +131,68 @@ export default function Analises({ onAbrirNoVales }) {
 
   const [campoOrdInativos, dirOrdInativos] = ordenacaoInativos.split("_");
   const multOrdInativos = dirOrdInativos === "asc" ? 1 : -1;
-  const inativosOrdenados = [...inativos].sort((a, b) => {
+
+  // Agrupa os clientes inativos pelo campo "Grupo de cliente" — mesma lógica
+  // usada em Base de Dados e Vales, pra não listar 3 cards separados quando
+  // na prática é uma única relação comercial com vários CNPJs.
+  function chaveGrupoCliente(c) {
+    return (c.grupo || "").trim().toLowerCase() || `cli_${c.id}`;
+  }
+  function nomeGrupoOuCliente(g) {
+    return g.nomeGrupo || g.clientes[0]?.nome || "";
+  }
+  function ultimaCompraDoCliente(c) {
+    return ultimaCompraPorCliente[c.id] || c.ultimaCompraPlanilha || "";
+  }
+
+  const gruposInativos = (() => {
+    const grupos = new Map();
+    inativos.forEach((c) => {
+      const chave = chaveGrupoCliente(c);
+      if (!grupos.has(chave)) {
+        grupos.set(chave, { chave, nomeGrupo: (c.grupo || "").trim(), clientes: [], representante: "" });
+      }
+      const g = grupos.get(chave);
+      g.clientes.push(c);
+      if (!g.representante && c.representante) g.representante = c.representante;
+    });
+    return Array.from(grupos.values()).map((g) => {
+      const ultimaCompra = g.clientes.reduce((max, c) => {
+        const u = ultimaCompraDoCliente(c);
+        return u && (!max || u > max) ? u : max;
+      }, "");
+      const mediaCompra = g.clientes.reduce((s, c) => s + (Number(c.mediaCompra) || 0), 0);
+      return { ...g, ultimaCompra, mediaCompra };
+    });
+  })();
+
+  const gruposInativosOrdenados = [...gruposInativos].sort((a, b) => {
     if (campoOrdInativos === "ultimaCompra") {
-      const da = new Date(ultimaCompraPorCliente[a.id] || a.ultimaCompraPlanilha || 0).getTime();
-      const db_ = new Date(ultimaCompraPorCliente[b.id] || b.ultimaCompraPlanilha || 0).getTime();
-      return multOrdInativos * (da - db_);
+      return multOrdInativos * (new Date(a.ultimaCompra || 0) - new Date(b.ultimaCompra || 0));
     }
     if (campoOrdInativos === "mediaCompra") {
-      return multOrdInativos * ((a.mediaCompra || 0) - (b.mediaCompra || 0));
+      return multOrdInativos * (a.mediaCompra - b.mediaCompra);
     }
-    return multOrdInativos * (a.nome || "").localeCompare(b.nome || "", "pt-BR");
+    return multOrdInativos * nomeGrupoOuCliente(a).localeCompare(nomeGrupoOuCliente(b), "pt-BR");
   });
+
+  // Junta os telefones de todos os CNPJs do grupo num só lugar, sem duplicar
+  // o mesmo número que apareça em mais de um cadastro do grupo.
+  function telefonesDoGrupo(g) {
+    const vistos = new Set();
+    const todos = [];
+    g.clientes.forEach((c) => {
+      telefonesDoCliente(c).forEach((t) => {
+        const digitos = String(t.numero || "").replace(/\D/g, "");
+        if (!vistos.has(digitos)) { vistos.add(digitos); todos.push(t); }
+      });
+    });
+    return todos;
+  }
+
+  async function handleContatoRealizadoGrupo(g) {
+    await Promise.all(g.clientes.map((c) => handleContatoRealizado(c.id)));
+  }
 
   // Mapa pra resolver o cadastro completo do cliente a partir de um pedido
   // (o pedido só guarda uma cópia do nome/id no momento da venda).
@@ -188,6 +249,12 @@ export default function Analises({ onAbrirNoVales }) {
     <div>
       {toast && <div className="toast">{toast}</div>}
 
+      {!previewHist && !importandoHist && !resultadoHist && !mostrarImportarHist ? (
+        <button type="button" className="card" style={{ border: "2px solid var(--pink)", width: "100%", textAlign: "left", cursor: "pointer", background: "none" }}
+          onClick={() => setMostrarImportarHist(true)}>
+          <strong>📤 Importar vales e compras pagas (planilha antiga)</strong>
+        </button>
+      ) : (
       <div className="card" style={{ border: "2px solid var(--pink)" }}>
         <h2 className="card-title">📤 Importar vales e compras pagas (planilha antiga)</h2>
 
@@ -273,7 +340,15 @@ export default function Analises({ onAbrirNoVales }) {
               : `${resultadoHist.processados} pedidos importados! ${resultadoHist.clientesCriados} clientes novos criados. ${resultadoHist.ignoradas} linhas ignoradas.`}
           </div>
         )}
+
+        {!previewHist && !importandoHist && (
+          <button type="button" className="btn btn-ghost" style={{ marginTop: 10, fontSize: 13 }}
+            onClick={() => { setMostrarImportarHist(false); setResultadoHist(null); }}>
+            Recolher
+          </button>
+        )}
       </div>
+      )}
 
       <div className="analises-grid">
         <div className="card">
@@ -312,18 +387,29 @@ export default function Analises({ onAbrirNoVales }) {
             </select>
           </div>
           <div className="analises-col-scroll">
-            {inativosOrdenados.length === 0 ? (
+            {gruposInativosOrdenados.length === 0 ? (
               <div className="empty-state" style={{ padding: 12 }}>Nenhum cliente inativo no momento.</div>
             ) : (
-              inativosOrdenados.map((c) => {
-                const telefones = telefonesDoCliente(c);
+              gruposInativosOrdenados.map((g) => {
+                const telefones = telefonesDoGrupo(g);
+                const expandido = expandidosInativos.has(g.chave);
+                const multiplos = g.clientes.length > 1;
                 return (
-                  <div key={c.id} className="list-item" onDoubleClick={() => abrirCliente(c)}
+                  <div key={g.chave} className="list-item"
+                    onDoubleClick={() => (multiplos ? toggleExpandidoInativo(g.chave) : abrirCliente(g.clientes[0]))}
                     style={{ flexDirection: "column", alignItems: "stretch", gap: 6, cursor: "default" }}>
-                    <strong>{c.nome}</strong>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <strong>{nomeGrupoOuCliente(g)}</strong>
+                      {multiplos && (
+                        <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{g.clientes.length} CNPJs</span>
+                      )}
+                    </div>
+                    {g.representante && (
+                      <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Rep: {g.representante}</div>
+                    )}
                     <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                      Última compra: {formatDate(ultimaCompraPorCliente[c.id] || c.ultimaCompraPlanilha)}
-                      {c.mediaCompra > 0 && ` · Ticket médio ${formatCurrency(c.mediaCompra)}`}
+                      Última compra: {formatDate(g.ultimaCompra)}
+                      {g.mediaCompra > 0 && ` · Ticket médio ${formatCurrency(g.mediaCompra)}`}
                     </div>
                     {telefones.length > 0 && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -332,7 +418,7 @@ export default function Analises({ onAbrirNoVales }) {
                             <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>
                               📞 {numero} <span style={{ fontSize: 11 }}>({rotulo})</span>
                             </span>
-                            <a href={linkWhatsAppInativo(numero, c.nome)} target="_blank" rel="noopener noreferrer"
+                            <a href={linkWhatsAppInativo(numero, nomeGrupoOuCliente(g))} target="_blank" rel="noopener noreferrer"
                               className="btn btn-secondary" style={{ fontSize: 12, padding: "4px 10px" }}
                               onClick={(e) => e.stopPropagation()}>
                               Mandar mensagem
@@ -341,8 +427,17 @@ export default function Analises({ onAbrirNoVales }) {
                         ))}
                       </div>
                     )}
+                    {multiplos && expandido && (
+                      <div style={{ borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                        {g.clientes.map((c) => (
+                          <div key={c.id} onClick={() => abrirCliente(c)} style={{ fontSize: 13, cursor: "pointer" }}>
+                            {c.nome} — Cód {c.codigo} · última compra {formatDate(ultimaCompraDoCliente(c))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <button className="btn btn-secondary" style={{ fontSize: 12, padding: "6px 10px", alignSelf: "flex-start" }}
-                      onClick={() => handleContatoRealizado(c.id)}>
+                      onClick={() => handleContatoRealizadoGrupo(g)}>
                       Contato realizado
                     </button>
                   </div>

@@ -136,6 +136,12 @@
 }
 
 @media (min-width: 900px) {
+  .ferramentas-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+
   .analises-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -187,11 +193,11 @@
   }
 }
 
-/* Base de Dados: as 3 ferramentas (importar/duplicados/enriquecer) lado a lado,
-   bem compactas — vale em qualquer tamanho de tela, inclusive celular. */
+/* Base de Dados: as 3 ferramentas (importar/duplicados/enriquecer) —
+   empilhadas no celular (padrão), só ficam lado a lado no computador. */
 .ferramentas-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 .ferramenta-card {
