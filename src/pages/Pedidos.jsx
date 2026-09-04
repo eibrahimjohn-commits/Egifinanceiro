@@ -189,7 +189,37 @@ export default function Pedidos() {
     setFormas((arr) => arr.filter((_, idx) => idx !== i));
   }
   function updateForma(i, campo, valor) {
-    setFormas((arr) => arr.map((f, idx) => (idx === i ? { ...f, [campo]: valor } : f)));
+    setFormas((arr) => arr.map((f, idx) => {
+      if (idx !== i) return f;
+      // Mudar valor total, número de folhas ou prazo refaz a divisão
+      // automática do zero — qualquer edição manual feita antes é descartada,
+      // já que os parâmetros de base mudaram.
+      const limpaEdicaoManual = ["valorTotal", "numFolhas", "prazoUltimoCheque"].includes(campo);
+      return { ...f, [campo]: valor, ...(limpaEdicaoManual ? { parcelasManual: null } : {}) };
+    }));
+  }
+
+  // As parcelas de um cheque começam sempre calculadas automaticamente
+  // (valor dividido igualmente, datas espaçadas até o prazo do último
+  // cheque) — mas dá pra editar cada folha individualmente depois. A edição
+  // manual fica guardada em parcelasManual até os campos de base mudarem.
+  function parcelasDaForma(f) {
+    return f.parcelasManual || calcularParcelasCheque(f.prazoUltimoCheque, f.numFolhas, f.valorTotal);
+  }
+
+  function atualizarParcela(i, parcelaIndex, campo, valor) {
+    setFormas((arr) => arr.map((f, idx) => {
+      if (idx !== i) return f;
+      const base = parcelasDaForma(f);
+      const novasParcelas = base.map((p, pi) =>
+        pi === parcelaIndex ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p
+      );
+      return { ...f, parcelasManual: novasParcelas };
+    }));
+  }
+
+  function recalcularParcelasAutomaticamente(i) {
+    setFormas((arr) => arr.map((f, idx) => (idx === i ? { ...f, parcelasManual: null } : f)));
   }
 
   const valorTotalPedido = itens.reduce((s, it) => s + (Number(it.valor) || 0), 0);
@@ -249,7 +279,7 @@ export default function Pedidos() {
         .filter((f) => (f.tipo === "cheque" ? Number(f.valorTotal) > 0 : Number(f.valor) > 0))
         .map((f) => {
           if (f.tipo === "cheque") {
-            const parcelas = calcularParcelasCheque(f.prazoUltimoCheque, f.numFolhas, f.valorTotal);
+            const parcelas = parcelasDaForma(f);
             return {
               tipo: "cheque",
               valor: Number(f.valorTotal),
@@ -592,12 +622,31 @@ export default function Pedidos() {
                     onChange={(e) => updateForma(i, "prazoUltimoCheque", e.target.value)} />
                 </div>
                 {f.valorTotal && f.prazoUltimoCheque && Number(f.numFolhas) > 0 && (
-                  <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                    {calcularParcelasCheque(f.prazoUltimoCheque, f.numFolhas, f.valorTotal).map((p) => (
-                      <div key={p.numero}>
-                        Folha {p.numero}: {formatCurrency(p.valor)} em {formatDate(p.data)}
+                  <div style={{ marginTop: 4 }}>
+                    {parcelasDaForma(f).map((p, pi) => (
+                      <div key={p.numero} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                        <span style={{ fontSize: 13, color: "var(--ink-soft)", flexShrink: 0, width: 56 }}>Folha {p.numero}</span>
+                        <input className="input" type="number" step="0.01" value={p.valor}
+                          onChange={(e) => atualizarParcela(i, pi, "valor", e.target.value)}
+                          style={{ flex: 1 }} />
+                        <input className="input" type="date" value={p.data}
+                          onChange={(e) => atualizarParcela(i, pi, "data", e.target.value)}
+                          style={{ flex: 1 }} />
                       </div>
                     ))}
+                    {f.parcelasManual && (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginTop: 2 }}>
+                        {Math.abs(parcelasDaForma(f).reduce((s, p) => s + Number(p.valor || 0), 0) - Number(f.valorTotal)) > 0.01 ? (
+                          <span style={{ color: "var(--red)" }}>
+                            Soma das folhas ({formatCurrency(parcelasDaForma(f).reduce((s, p) => s + Number(p.valor || 0), 0))}) diferente do valor total em cheque
+                          </span>
+                        ) : <span style={{ color: "var(--ink-soft)" }}>Folhas editadas manualmente</span>}
+                        <button type="button" className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 8px" }}
+                          onClick={() => recalcularParcelasAutomaticamente(i)}>
+                          Recalcular automaticamente
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </>

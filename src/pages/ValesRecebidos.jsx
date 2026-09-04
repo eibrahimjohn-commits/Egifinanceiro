@@ -126,6 +126,7 @@ function DetalheExpandido({
   valorBaixa, setValorBaixa, dataBaixa, setDataBaixa, formaBaixa, setFormaBaixa,
   contaBaixa, setContaBaixa, contaBaixaId, setContaBaixaId,
   numFolhasBaixa, setNumFolhasBaixa, prazoUltimoChequeBaixa, setPrazoUltimoChequeBaixa,
+  parcelasBaixaManual, parcelasDaBaixa, onEditarParcelaBaixa, onRecalcularParcelasBaixa,
   descricaoBaixa, setDescricaoBaixa,
   editandoItem, onAbrirEdicaoItem, onCancelarEdicaoItem, onSalvarEdicaoItem, setValorEditandoItem,
   confirmando, onAbrirConfirmar, onCancelarConfirmar, onConfirmarPixDeposito,
@@ -135,6 +136,16 @@ function DetalheExpandido({
   const historico = g.pedidos
     .flatMap((p) => (p.pagamentos || []).map((pg) => ({ ...pg, pedidoData: p.data })))
     .sort((a, b) => new Date(b.data) - new Date(a.data));
+
+  // O que foi recebido JÁ NA VENDA (dinheiro/cheque/conta de 3º na hora do
+  // pedido) nunca aparecia em lugar nenhum — só "Pagamentos" (baixas feitas
+  // depois) e "Compras" (o que foi vendido). Por isso um pedido pago à vista
+  // parecia "sem nenhum pagamento registrado" mesmo estando 100% quitado.
+  const recebidoNaVenda = g.pedidos
+    .flatMap((p) => (p.formasPagamento || [])
+      .filter((f) => f.tipo !== "vale")
+      .map((f) => ({ ...f, pedidoData: p.data })))
+    .sort((a, b) => new Date(b.pedidoData) - new Date(a.pedidoData));
 
   const pedidosComSaldo = somenteLeitura ? [] : g.pedidos.filter((p) => saldoDoPedido(p) > 0.01);
 
@@ -175,7 +186,7 @@ function DetalheExpandido({
           <div className="row">
             <div className="field">
               <label>Valor recebido</label>
-              <input className="input" type="number" step="0.01" value={valorBaixa} onChange={(e) => setValorBaixa(e.target.value)} />
+              <input className="input" type="number" step="0.01" value={valorBaixa} onChange={(e) => { setValorBaixa(e.target.value); onRecalcularParcelasBaixa(); }} />
             </div>
             <div className="field">
               <label>Data</label>
@@ -204,22 +215,38 @@ function DetalheExpandido({
                 <div className="field">
                   <label>Número de folhas</label>
                   <input className="input" type="number" min="1" value={numFolhasBaixa}
-                    onChange={(e) => setNumFolhasBaixa(e.target.value)} />
+                    onChange={(e) => { setNumFolhasBaixa(e.target.value); onRecalcularParcelasBaixa(); }} />
                 </div>
                 <div className="field">
                   <label>Prazo do último cheque</label>
                   <input className="input" type="date" value={prazoUltimoChequeBaixa}
-                    onChange={(e) => setPrazoUltimoChequeBaixa(e.target.value)} />
+                    onChange={(e) => { setPrazoUltimoChequeBaixa(e.target.value); onRecalcularParcelasBaixa(); }} />
                 </div>
               </div>
               {valorBaixa && prazoUltimoChequeBaixa && Number(numFolhasBaixa) > 0 && (
                 <div style={{ background: "white", borderRadius: 10, padding: 10, marginBottom: 12 }}>
-                  {calcularParcelasCheque(prazoUltimoChequeBaixa, numFolhasBaixa, valorBaixa).map((p) => (
-                    <div key={p.numero} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
-                      <span>Folha {p.numero} — {formatDate(p.data)}</span>
-                      <strong>{formatCurrency(p.valor)}</strong>
+                  {parcelasDaBaixa().map((p, pi) => (
+                    <div key={p.numero} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, color: "var(--ink-soft)", flexShrink: 0, width: 50 }}>Folha {p.numero}</span>
+                      <input className="input" type="number" step="0.01" value={p.valor}
+                        onChange={(e) => onEditarParcelaBaixa(pi, "valor", e.target.value)}
+                        style={{ flex: 1, padding: "6px 8px", fontSize: 13 }} />
+                      <input className="input" type="date" value={p.data}
+                        onChange={(e) => onEditarParcelaBaixa(pi, "data", e.target.value)}
+                        style={{ flex: 1, padding: "6px 8px", fontSize: 13 }} />
                     </div>
                   ))}
+                  {parcelasBaixaManual && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11 }}>
+                      {Math.abs(parcelasDaBaixa().reduce((s, p) => s + Number(p.valor || 0), 0) - Number(valorBaixa)) > 0.01 ? (
+                        <span style={{ color: "var(--red)" }}>Soma das folhas diferente do valor total</span>
+                      ) : <span style={{ color: "var(--ink-soft)" }}>Folhas editadas manualmente</span>}
+                      <button type="button" className="btn btn-ghost" style={{ fontSize: 11, padding: "3px 6px" }}
+                        onClick={onRecalcularParcelasBaixa}>
+                        Recalcular
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </>
@@ -306,6 +333,22 @@ function DetalheExpandido({
               ))
             ) || []),
           ])}
+        </div>
+      )}
+
+      {recebidoNaVenda.length > 0 && (
+        <div className="card" style={{ background: "var(--bg)" }}>
+          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Recebido na venda</h3>
+          {recebidoNaVenda.map((f, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+              <span>
+                {formatDate(f.pedidoData)} · {labelForma(f.tipo)}
+                {f.tipo === "conta_terceiros" && f.descricao ? ` (${f.descricao})` : ""}
+                {FORMAS_COM_CONFIRMAR.includes(f.tipo) && !f.confirmado ? " — aguardando confirmação" : ""}
+              </span>
+              <strong>{formatCurrency(f.valor)}</strong>
+            </div>
+          ))}
         </div>
       )}
 
@@ -399,6 +442,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const [numFolhasBaixa, setNumFolhasBaixa] = useState("1");
   const [prazoUltimoChequeBaixa, setPrazoUltimoChequeBaixa] = useState("");
   const [descricaoBaixa, setDescricaoBaixa] = useState("");
+  const [parcelasBaixaManual, setParcelasBaixaManual] = useState(null);
   const [editandoItem, setEditandoItem] = useState(null); // { pedido, itemIndex, valor }
 
   const [confirmando, setConfirmando] = useState(null);
@@ -479,8 +523,15 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const pedidosAtivos = pedidos.filter((p) => !p.arquivado);
   const clientesPorId = {};
   clientes.forEach((c) => { clientesPorId[c.id] = c; });
-  const pedidosComissao = pedidosAtivos.filter((p) => p.status === "pago" && p.clienteRepresentante);
-  const pedidosVales = pedidosAtivos.filter((p) => !(p.status === "pago" && p.clienteRepresentante));
+  // Mesma correção de "sempre usar o cadastro atual" que já fizemos pro nome/grupo:
+  // se o representante foi adicionado/editado no cadastro DEPOIS do pedido já
+  // existir, o pedido tem que passar a contar como comissão também — não fica
+  // preso em Vales só porque a cópia antiga do pedido estava vazia.
+  function representanteAtualDoPedido(p) {
+    return clientesPorId[p.clienteId]?.representante || p.clienteRepresentante;
+  }
+  const pedidosComissao = pedidosAtivos.filter((p) => p.status === "pago" && representanteAtualDoPedido(p));
+  const pedidosVales = pedidosAtivos.filter((p) => !(p.status === "pago" && representanteAtualDoPedido(p)));
   const pedidosRecebidos = pedidos.filter((p) => p.arquivado === true);
 
   // Total geral em aberto e previsão de recebimento nos próximos 30 dias
@@ -515,11 +566,11 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   );
   const comissoesFiltradas = aplicarFiltroOrdenacao(
     pedidosComissao,
-    (p) => p.clienteNome,
+    (p) => clientesPorId[p.clienteId]?.nome || p.clienteNome,
     (p) => p.data,
     (p) => p.valor,
     null,
-    (p) => p.clienteRepresentante
+    (p) => representanteAtualDoPedido(p)
   );
 
   function abrirBaixa(pedido) {
@@ -533,6 +584,21 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     setNumFolhasBaixa("1");
     setPrazoUltimoChequeBaixa("");
     setDescricaoBaixa("");
+    setParcelasBaixaManual(null);
+  }
+
+  function parcelasDaBaixa() {
+    return parcelasBaixaManual || calcularParcelasCheque(prazoUltimoChequeBaixa, numFolhasBaixa, valorBaixa);
+  }
+
+  function editarParcelaBaixa(index, campo, valor) {
+    const base = parcelasDaBaixa();
+    const novas = base.map((p, i) => (i === index ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p));
+    setParcelasBaixaManual(novas);
+  }
+
+  function mudarBaseCheque(setter) {
+    return (v) => { setter(v); setParcelasBaixaManual(null); };
   }
 
   async function confirmarBaixa() {
@@ -549,7 +615,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
       mostrarToast("Informe de quem é a conta");
       return;
     }
-    const parcelas = ehCheque ? calcularParcelasCheque(prazoUltimoChequeBaixa, numFolhasBaixa, valorBaixa) : null;
+    const parcelas = ehCheque ? parcelasDaBaixa() : null;
     await registrarBaixa(pedidoBaixa.id, pedidoBaixa, {
       valor: Number(valorBaixa),
       data: dataBaixa,
@@ -687,6 +753,8 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
                   formaBaixa={formaBaixa} setFormaBaixa={setFormaBaixa}
                   numFolhasBaixa={numFolhasBaixa} setNumFolhasBaixa={setNumFolhasBaixa}
                   prazoUltimoChequeBaixa={prazoUltimoChequeBaixa} setPrazoUltimoChequeBaixa={setPrazoUltimoChequeBaixa}
+                  parcelasBaixaManual={parcelasBaixaManual} parcelasDaBaixa={parcelasDaBaixa}
+                  onEditarParcelaBaixa={editarParcelaBaixa} onRecalcularParcelasBaixa={() => setParcelasBaixaManual(null)}
                   descricaoBaixa={descricaoBaixa} setDescricaoBaixa={setDescricaoBaixa}
                   editandoItem={editandoItem} onAbrirEdicaoItem={abrirEdicaoItem} onCancelarEdicaoItem={() => setEditandoItem(null)}
                   onSalvarEdicaoItem={salvarEdicaoItem} setValorEditandoItem={setValorEditandoItem}
@@ -717,9 +785,9 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <input type="checkbox" checked={selecionadosComissao.has(p.id)} onChange={() => toggleSelecaoComissao(p.id)} onClick={(e) => e.stopPropagation()} />
                     <div>
-                      <strong>{p.clienteNome}</strong>
+                      <strong>{clientesPorId[p.clienteId]?.nome || p.clienteNome}</strong>
                       <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                        Rep: {p.clienteRepresentante} · {formatDate(p.data)} · {formatCurrency(p.valor)}
+                        Rep: {representanteAtualDoPedido(p)} · {formatDate(p.data)} · {formatCurrency(p.valor)}
                       </div>
                     </div>
                   </div>
