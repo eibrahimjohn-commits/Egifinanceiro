@@ -308,12 +308,17 @@ export default function Pedidos() {
         .reduce((s, f) => s + f.valor, 0);
 
       // Se sobrou 5% ou menos em aberto e nenhuma forma usada precisa de
-      // confirmação futura (PIX/Depósito), o pedido já nasce em Recebidos —
-      // não precisa passar por Vales. Isso só vale no momento do lançamento;
-      // uma vez em Vales, mover pra Recebidos continua sendo manual.
+      // confirmação futura (PIX/Depósito), o pedido já nasce quitado — não
+      // precisa passar por Vales. Isso só vale no momento do lançamento;
+      // depois disso, mover pra Recebidos/Comissões continua manual.
+      // Cliente COM representante nunca vai direto pra Recebidos — nesse
+      // caso vai direto pra Comissões, porque ainda tem uma comissão a pagar.
       const abertoNoLancamento = valorEsperado - valorPago;
       const percentualAbertoNoLancamento = valorEsperado > 0 ? (abertoNoLancamento / valorEsperado) * 100 : 0;
-      const vaiDireitoParaRecebidos = podeIrDireitoParaRecebidos(percentualAbertoNoLancamento, formasPagamento);
+      const quitadoNoLancamento = podeIrDireitoParaRecebidos(percentualAbertoNoLancamento, formasPagamento);
+      const temRepresentante = !!cliente.representante?.trim();
+      const vaiDireitoParaRecebidos = quitadoNoLancamento && !temRepresentante;
+      const vaiDireitoParaComissoes = quitadoNoLancamento && temRepresentante;
 
       await criarPedido({
         clienteId,
@@ -332,10 +337,12 @@ export default function Pedidos() {
         clientePrazo: cliente.prazo,
         formasPagamento,
         ...(vaiDireitoParaRecebidos ? { arquivado: true } : {}),
+        ...(vaiDireitoParaComissoes ? { forcarPago: true } : {}),
       });
 
       const avisoCodigo = !cliente.codigo?.trim() && !cliente.id ? ` Código gerado: ${codigoFinal}.` : "";
-      const avisoRecebidos = vaiDireitoParaRecebidos ? " Já foi direto pra Recebidos (pago à vista)." : "";
+      const avisoRecebidos = vaiDireitoParaRecebidos ? " Já foi direto pra Recebidos (pago à vista)."
+        : vaiDireitoParaComissoes ? " Já foi direto pra Comissões (pago à vista)." : "";
       mostrarToast((avisoVale || "Pedido lançado com sucesso!") + avisoRecebidos + avisoCodigo);
       resetTudo();
     } catch (err) {

@@ -27,14 +27,21 @@ export async function criarPedido(pedido) {
   const valor = Number(pedido.valor) || 0;
   const valorPago = Number(pedido.valorPago) || 0;
   const valorDevido = valorDevidoDoPedido({ ...pedido, valor });
+  const statusCalculado = valorPago >= valorDevido - 0.01 ? "pago" : "aberto";
   const payload = {
     ...pedido,
     valor,
     valorDevido,
     valorPago,
-    status: valorPago >= valorDevido - 0.01 ? "pago" : "aberto",
+    // forcarPago: quando o pedido tem representante e já nasce quase todo
+    // pago (ver podeIrDireitoParaRecebidos em constants.js), ele vai direto
+    // pra Comissões — o que exige status "pago" mesmo sobrando um resto
+    // pequeno em aberto, igual já fazemos com "arquivado" pro caso sem
+    // representante.
+    status: pedido.forcarPago ? "pago" : statusCalculado,
     createdAt: serverTimestamp(),
   };
+  delete payload.forcarPago;
   const docRef = await addDoc(pedidosRef, payload);
   return docRef.id;
 }
@@ -279,6 +286,19 @@ export async function arquivarPedidos(pedidoIds, extra = {}) {
   const batch = writeBatch(db);
   pedidoIds.forEach((id) => {
     batch.update(doc(db, "pedidos", id), { arquivado: true, ...extra });
+  });
+  await batch.commit();
+}
+
+// "Mover para Comissões" (pra pedidos com representante, no lugar de mover
+// pra Recebidos): força o pedido a contar como pago, sem arquivar — ele
+// continua ativo, só que agora aparece na aba Comissões aguardando o
+// representante ser pago, em vez de ficar preso em Vales com um resto de
+// saldo pequeno.
+export async function marcarComoPago(pedidoIds) {
+  const batch = writeBatch(db);
+  pedidoIds.forEach((id) => {
+    batch.update(doc(db, "pedidos", id), { status: "pago" });
   });
   await batch.commit();
 }

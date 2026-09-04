@@ -168,11 +168,14 @@
     margin-bottom: 0;
   }
 
-  /* Vales/Recebidos: lista em 3 colunas */
+  /* Vales/Recebidos: lista em colunas — o número de colunas se ajusta
+     sozinho conforme sobra espaço (zoom out, monitor largo etc.), em vez de
+     ficar travado em 3 e deixar espaço vazio dos lados. */
   .lista-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 12px;
+    align-items: start;
   }
   .lista-grid > .list-item {
     margin-bottom: 0;

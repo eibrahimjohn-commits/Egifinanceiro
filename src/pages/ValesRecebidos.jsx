@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarPedidos, registrarBaixa, confirmarFormaPagamento, arquivarPedidos, editarItemPedido } from "../lib/pedidos";
+import { listarPedidos, registrarBaixa, confirmarFormaPagamento, arquivarPedidos, marcarComoPago, editarItemPedido } from "../lib/pedidos";
 import { listarClientes } from "../lib/clientes";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 import {
@@ -131,7 +131,7 @@ function DetalheExpandido({
   editandoItem, onAbrirEdicaoItem, onCancelarEdicaoItem, onSalvarEdicaoItem, setValorEditandoItem,
   confirmando, onAbrirConfirmar, onCancelarConfirmar, onConfirmarPixDeposito,
   contaConfirmar, setContaConfirmar, contaConfirmarId, setContaConfirmarId,
-  onMoverRecebidos, somenteLeitura,
+  onMoverRecebidos, onMoverComissoes, somenteLeitura,
 }) {
   const historico = g.pedidos
     .flatMap((p) => (p.pagamentos || []).map((pg) => ({ ...pg, pedidoData: p.data })))
@@ -152,9 +152,15 @@ function DetalheExpandido({
   return (
     <div style={{ padding: "0 4px 4px" }} onClick={(e) => e.stopPropagation()}>
       {!somenteLeitura && podeMoverParaRecebidos(g.percentual) && !pedidoBaixa && (
-        <button className="btn btn-secondary btn-block" style={{ marginBottom: 12 }} onClick={() => onMoverRecebidos(g)}>
-          Mover para recebidos
-        </button>
+        g.representante ? (
+          <button className="btn btn-secondary btn-block" style={{ marginBottom: 12 }} onClick={() => onMoverComissoes(g)}>
+            Mover para Comissões
+          </button>
+        ) : (
+          <button className="btn btn-secondary btn-block" style={{ marginBottom: 12 }} onClick={() => onMoverRecebidos(g)}>
+            Mover para recebidos
+          </button>
+        )
       )}
 
       {pedidosComSaldo.length > 0 && !pedidoBaixa && (
@@ -669,6 +675,13 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     carregar();
   }
 
+  async function moverParaComissoes(g) {
+    await marcarComoPago(g.pedidos.map((p) => p.id));
+    mostrarToast("Cliente movido para Comissões!");
+    setExpandidos((atual) => { const n = new Set(atual); n.delete(g.chave); return n; });
+    carregar();
+  }
+
   function toggleSelecaoComissao(id) {
     setSelecionadosComissao((atual) => {
       const novo = new Set(atual);
@@ -762,6 +775,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
                   confirmando={confirmando} onAbrirConfirmar={abrirConfirmar} onCancelarConfirmar={() => setConfirmando(null)} onConfirmarPixDeposito={confirmarPixDeposito}
                   contaConfirmar={contaConfirmar} setContaConfirmar={setContaConfirmar} contaConfirmarId={contaConfirmarId} setContaConfirmarId={setContaConfirmarId}
                   onMoverRecebidos={moverParaRecebidos}
+                  onMoverComissoes={moverParaComissoes}
                 />
               </CardGrupo>
             ))}
@@ -814,6 +828,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
                   confirmando={null} onAbrirConfirmar={() => {}} onCancelarConfirmar={() => {}} onConfirmarPixDeposito={() => {}}
                   contaConfirmar="" setContaConfirmar={() => {}} contaConfirmarId="" setContaConfirmarId={() => {}}
                   onMoverRecebidos={() => {}}
+                  onMoverComissoes={() => {}}
                   somenteLeitura
                 />
               </CardGrupo>

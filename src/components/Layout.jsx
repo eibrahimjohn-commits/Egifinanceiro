@@ -10,7 +10,7 @@ const TABS = [
   { id: "prospeccao", label: "Prospecção" },
 ];
 
-export default function Layout({ active, onChange, wide, children }) {
+export default function Layout({ active, onChange, wide, full, children }) {
   return (
     <div className="layout">
       <header className="topbar">
@@ -28,7 +28,7 @@ export default function Layout({ active, onChange, wide, children }) {
           </button>
         ))}
       </nav>
-      <main className={"content" + (wide ? " content-wide" : "")}>{children}</main>
+      <main className={"content" + (full ? " content-full" : wide ? " content-wide" : "")}>{children}</main>
     </div>
   );
 }

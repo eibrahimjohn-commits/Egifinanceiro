@@ -14,6 +14,7 @@ export default function App() {
   const [alvoVales, setAlvoVales] = useState(null); // pedido atrasado clicado nas Análises
 
   const WIDE_TABS = ["pedidos", "vales", "analises", "base", "prospeccao"];
+  const FULL_TABS = ["vales"];
 
   if (!autenticado) {
     return <LoginGate onEntrar={() => setAutenticado(true)} />;
@@ -25,7 +26,7 @@ export default function App() {
   }
 
   return (
-    <Layout active={tab} onChange={setTab} wide={WIDE_TABS.includes(tab)}>
+    <Layout active={tab} onChange={setTab} wide={WIDE_TABS.includes(tab)} full={FULL_TABS.includes(tab)}>
       {tab === "pedidos" && <Pedidos />}
       {tab === "vales" && (
         <ValesRecebidos alvoAbrir={alvoVales} onAlvoConsumido={() => setAlvoVales(null)} />

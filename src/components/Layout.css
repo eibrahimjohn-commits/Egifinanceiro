@@ -71,4 +71,11 @@
   .content-wide {
     max-width: 1240px;
   }
+  /* Vales e Recebidos: sem limite de largura — ocupa a tela inteira (importante
+     pro zoom out, que efetivamente "alarga" a tela em pixels de CSS) */
+  .content-full {
+    max-width: none;
+    padding-left: 24px;
+    padding-right: 24px;
+  }
 }
