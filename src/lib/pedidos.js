@@ -96,12 +96,12 @@ export async function confirmarFormaPagamento(pedidoId, pedidoAtual, formaIndex,
 
   formas[formaIndex] = { ...forma, confirmado: true, conta: conta || null, dataConfirmacao: dataISO };
 
-  const valorDevido = valorDevidoDoPedido(pedidoAtual);
-  const novoValorPago = valorPagoDoPedido({ ...pedidoAtual, formasPagamento: formas });
-  const novoStatus = novoValorPago >= valorDevido - 0.01 ? "pago" : "aberto";
-
   const historico = [...(pedidoAtual.pagamentos || [])];
   historico.push({ valor: Number(forma.valor), data: dataISO, formaPagamento: forma.tipo, conta: conta || null });
+
+  const valorDevido = valorDevidoDoPedido(pedidoAtual);
+  const novoValorPago = valorPagoDoPedido({ ...pedidoAtual, formasPagamento: formas, pagamentos: historico });
+  const novoStatus = novoValorPago >= valorDevido - 0.01 ? "pago" : "aberto";
 
   await updateDoc(doc(db, "pedidos", pedidoId), {
     formasPagamento: formas,

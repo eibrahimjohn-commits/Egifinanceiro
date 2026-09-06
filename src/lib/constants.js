@@ -189,14 +189,15 @@ export function valorDevidoDoPedido(p) {
 }
 
 // Mesma filosofia do valorDevidoDoPedido, mas pro lado do que já foi pago:
-// sempre a soma do que realmente está registrado (formas recebidas na hora
-// da venda + PIX/Depósito já confirmados + baixas feitas depois) — nunca um
-// contador solto. Isso é o que permite editar ou excluir um pagamento com
-// segurança: o saldo se ajusta sozinho, sem precisar "recalcular" nada à mão.
+// sempre a soma do que realmente está registrado — nunca um contador solto.
+// Importante: PIX/Depósito confirmado NÃO entra aqui pela formasPagamento,
+// porque confirmar sempre cria uma entrada correspondente em "pagamentos"
+// (ver confirmarFormaPagamento) — contar os dois lados duplicaria o valor.
+// Só dinheiro/cheque/conta de 3º contam direto pela formasPagamento, porque
+// esses nunca geram uma entrada em "pagamentos" (já são recebidos na hora).
 export function valorPagoDoPedido(p) {
   const dasFormas = (p.formasPagamento || []).reduce((s, f) => {
     if (FORMAS_RECEBIMENTO_IMEDIATO.includes(f.tipo)) return s + (Number(f.valor) || 0);
-    if (FORMAS_QUE_PRECISAM_CONFIRMACAO.includes(f.tipo) && f.confirmado) return s + (Number(f.valor) || 0);
     return s;
   }, 0);
   const dasBaixas = (p.pagamentos || []).reduce((s, pg) => s + (Number(pg.valor) || 0), 0);
