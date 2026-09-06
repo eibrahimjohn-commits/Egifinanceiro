@@ -7,6 +7,15 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // skipWaiting + clientsClaim: assim que um novo deploy termina, a aba
+      // já aberta assume a versão nova na hora (com um reload automático),
+      // em vez de ficar presa na versão antiga em cache até fechar tudo e
+      // abrir de novo. Sem isso, uma mudança já publicada podia parecer que
+      // "não pegou" mesmo estando tudo certo no código.
+      workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
+      },
       includeAssets: ['favicon.svg'],
       manifest: {
         name: 'EGI Financeiro',

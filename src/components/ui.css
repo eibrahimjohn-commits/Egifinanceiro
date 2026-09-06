@@ -153,16 +153,20 @@
     height: 100%;
   }
   .analises-col-scroll {
-    max-height: 480px;
+    max-height: 600px;
     overflow-y: auto;
   }
 
-  /* Pedidos: bloco Cliente à esquerda, Pedido à direita */
+  /* Pedidos: bloco Cliente à esquerda, Pedido à direita — largura máxima
+     pra não esticar demais os campos do formulário em telas muito largas
+     (a tela agora ocupa 100%, mas o formulário em si fica confortável). */
   .pedidos-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 16px;
     align-items: start;
+    max-width: 1400px;
+    margin: 0 auto;
   }
   .pedidos-grid > .card {
     margin-bottom: 0;
@@ -185,10 +189,11 @@
     gap: 8px;
   }
 
-  /* Base de Dados: lista de clientes em 3 colunas */
+  /* Base de Dados / Prospecção: lista de clientes em colunas — mesmo
+     comportamento responsivo do lista-grid. */
   .clientes-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 12px;
   }
   .clientes-grid > .list-item {

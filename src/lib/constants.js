@@ -78,12 +78,46 @@ export function formatDate(dateStr) {
 // Atraso agora é baseado no Prazo de pagamento do cliente (dias corridos a partir da
 // data do pedido), não mais nas parcelas de cheque — cheque já conta como recebido
 // (fica em Recebidos), então não deve ser motivo de "atraso".
+// Estrutura de checkpoints de cobrança a partir do prazo do cliente (em dias):
+// - sem prazo / "À vista" (0 dias): só 1 checkpoint, com 1 semana de tolerância
+//   antes de considerar atrasado (dá tempo do cheque/depósito compensar etc.)
+// - "30 dias" (30): 1 checkpoint só, no dia 30, exigindo 100% pago.
+// - "30 e 60 dias" (60): 2 checkpoints — no dia 30 espera pelo menos a metade
+//   paga (usamos 40% em vez de 50% pra dar uma margem de erro), no dia 60
+//   espera 100%.
+// - "30, 60 e 90 dias" (90): 3 checkpoints, seguindo a mesma lógica (ideal
+//   dividido em partes iguais, com 10 pontos percentuais de margem em cada
+//   checkpoint intermediário; o último sempre exige 100%).
+const DIAS_TOLERANCIA_A_VISTA = 7;
+const MARGEM_PERCENTUAL_CHECKPOINT = 10;
+
+function checkpointsDoPrazo(prazoDias) {
+  if (!prazoDias || prazoDias <= 0) {
+    return [{ dias: DIAS_TOLERANCIA_A_VISTA, percentualMinimo: 100 }];
+  }
+  const numPassos = Math.max(1, Math.round(prazoDias / 30));
+  const checkpoints = [];
+  for (let i = 1; i <= numPassos; i++) {
+    const dias = (prazoDias / numPassos) * i;
+    const idealPercentual = (i / numPassos) * 100;
+    const ehUltimo = i === numPassos;
+    checkpoints.push({
+      dias,
+      percentualMinimo: ehUltimo ? 100 : Math.max(0, idealPercentual - MARGEM_PERCENTUAL_CHECKPOINT),
+    });
+  }
+  return checkpoints;
+}
+
 export function pedidoEstaAtrasado(pedido) {
   if (pedido.status !== "aberto" || pedido.arquivado) return false;
-  const prazoDias = Number(pedido.clientePrazo);
-  if (!prazoDias || prazoDias <= 0) return false; // sem prazo definido, não dá pra avaliar
-  const limite = new Date(new Date(pedido.data + "T00:00:00").getTime() + prazoDias * 86400000);
-  return new Date() > limite;
+  const valorTotal = valorDevidoDoPedido(pedido);
+  if (valorTotal <= 0) return false;
+  const percentualPago = valorPagoDoPedido(pedido) / valorTotal * 100;
+  const diasPassados = (Date.now() - new Date(pedido.data + "T00:00:00").getTime()) / 86400000;
+
+  const checkpoints = checkpointsDoPrazo(Number(pedido.clientePrazo));
+  return checkpoints.some((cp) => diasPassados >= cp.dias && percentualPago + 0.01 < cp.percentualMinimo);
 }
 
 // Extrai o percentual numérico de um texto livre de desconto, ex: "5% à vista" -> 5
@@ -154,10 +188,25 @@ export function valorDevidoDoPedido(p) {
   return Number(p.valorDevido ?? p.valor) || 0;
 }
 
+// Mesma filosofia do valorDevidoDoPedido, mas pro lado do que já foi pago:
+// sempre a soma do que realmente está registrado (formas recebidas na hora
+// da venda + PIX/Depósito já confirmados + baixas feitas depois) — nunca um
+// contador solto. Isso é o que permite editar ou excluir um pagamento com
+// segurança: o saldo se ajusta sozinho, sem precisar "recalcular" nada à mão.
+export function valorPagoDoPedido(p) {
+  const dasFormas = (p.formasPagamento || []).reduce((s, f) => {
+    if (FORMAS_RECEBIMENTO_IMEDIATO.includes(f.tipo)) return s + (Number(f.valor) || 0);
+    if (FORMAS_QUE_PRECISAM_CONFIRMACAO.includes(f.tipo) && f.confirmado) return s + (Number(f.valor) || 0);
+    return s;
+  }, 0);
+  const dasBaixas = (p.pagamentos || []).reduce((s, pg) => s + (Number(pg.valor) || 0), 0);
+  return dasFormas + dasBaixas;
+}
+
 // Saldo em aberto de um pedido = valor total (soma das compras, já com
 // desconto) - o que já foi pago.
 export function saldoDoPedido(p) {
-  return valorDevidoDoPedido(p) - (Number(p.valorPago) || 0);
+  return valorDevidoDoPedido(p) - valorPagoDoPedido(p);
 }
 
 export const CONTAS_PADRAO = [

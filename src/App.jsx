@@ -7,14 +7,15 @@ import Pagamentos from "./pages/Pagamentos";
 import Analises from "./pages/Analises";
 import BaseDados from "./pages/BaseDados";
 import Prospeccao from "./pages/Prospeccao";
+import Historico from "./pages/Historico";
 
 export default function App() {
   const [autenticado, setAutenticado] = useState(estaAutenticado());
   const [tab, setTab] = useState("pedidos");
   const [alvoVales, setAlvoVales] = useState(null); // pedido atrasado clicado nas Análises
 
-  const WIDE_TABS = ["pedidos", "vales", "analises", "base", "prospeccao"];
-  const FULL_TABS = ["vales"];
+  const WIDE_TABS = ["pedidos", "vales", "analises", "base", "prospeccao", "historico"];
+  const FULL_TABS = ["pedidos", "vales", "analises", "base", "prospeccao", "historico"];
 
   if (!autenticado) {
     return <LoginGate onEntrar={() => setAutenticado(true)} />;
@@ -35,6 +36,7 @@ export default function App() {
       {tab === "analises" && <Analises onAbrirNoVales={abrirNoVales} />}
       {tab === "base" && <BaseDados />}
       {tab === "prospeccao" && <Prospeccao />}
+      {tab === "historico" && <Historico />}
     </Layout>
   );
 }

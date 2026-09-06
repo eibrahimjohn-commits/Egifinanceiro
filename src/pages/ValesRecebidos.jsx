@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarPedidos, registrarBaixa, confirmarFormaPagamento, arquivarPedidos, marcarComoPago, editarItemPedido } from "../lib/pedidos";
+import { listarPedidos, registrarBaixa, confirmarFormaPagamento, arquivarPedidos, marcarComoPago, editarItemPedido, excluirItemPedido, editarPagamento, excluirPagamento } from "../lib/pedidos";
 import { listarClientes } from "../lib/clientes";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 import {
   formatCurrency, formatDate, todayISO, FORMAS_PAGAMENTO, CONTAS_PADRAO,
   pedidoEstaAtrasado, calcularPercentualAberto, tagResumoCliente, podeMoverParaRecebidos,
-  calcularParcelasCheque, valorDevidoDoPedido, saldoDoPedido,
+  calcularParcelasCheque, valorDevidoDoPedido, valorPagoDoPedido, saldoDoPedido,
 } from "../lib/constants";
 
 const FORMAS_COM_CONTA = ["pix_ted", "deposito"];
@@ -73,7 +73,7 @@ function agruparPorCliente(lista, clientesPorId = {}) {
     if (p.clienteId) g.clientesIds.add(p.clienteId);
     if (!g.representante && representanteAtual) g.representante = representanteAtual;
     g.totalDevido += valorDevidoDoPedido(p);
-    g.totalPago += Number(p.valorPago || 0);
+    g.totalPago += valorPagoDoPedido(p);
     if (new Date(p.data) > new Date(g.dataMaisRecente)) g.dataMaisRecente = p.data;
     if (pedidoEstaAtrasado(p)) g.atrasado = true;
   });
@@ -128,13 +128,16 @@ function DetalheExpandido({
   numFolhasBaixa, setNumFolhasBaixa, prazoUltimoChequeBaixa, setPrazoUltimoChequeBaixa,
   parcelasBaixaManual, parcelasDaBaixa, onEditarParcelaBaixa, onRecalcularParcelasBaixa,
   descricaoBaixa, setDescricaoBaixa,
-  editandoItem, onAbrirEdicaoItem, onCancelarEdicaoItem, onSalvarEdicaoItem, setValorEditandoItem,
+  editandoItem, onAbrirEdicaoItem, onCancelarEdicaoItem, onSalvarEdicaoItem,
+  onSetValorEditandoItem, onSetDataEditandoItem, onExcluirCompra,
+  editandoPagamento, onAbrirEdicaoPagamento, onCancelarEdicaoPagamento, onSalvarEdicaoPagamento,
+  onSetValorEditandoPagamento, onSetDataEditandoPagamento, onExcluirPagamento,
   confirmando, onAbrirConfirmar, onCancelarConfirmar, onConfirmarPixDeposito,
   contaConfirmar, setContaConfirmar, contaConfirmarId, setContaConfirmarId,
   onMoverRecebidos, onMoverComissoes, somenteLeitura,
 }) {
   const historico = g.pedidos
-    .flatMap((p) => (p.pagamentos || []).map((pg) => ({ ...pg, pedidoData: p.data })))
+    .flatMap((p) => (p.pagamentos || []).map((pg, pagamentoIndex) => ({ ...pg, pedidoData: p.data, pedido: p, pagamentoIndex })))
     .sort((a, b) => new Date(b.data) - new Date(a.data));
 
   // O que foi recebido JÁ NA VENDA (dinheiro/cheque/conta de 3º na hora do
@@ -271,14 +274,18 @@ function DetalheExpandido({
           return (
             <div key={p.id + "_" + i} style={{ padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
               {editandoEsse ? (
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <span style={{ fontSize: 13, flexShrink: 0 }}>{formatDate(it.data)}</span>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <input className="input" type="date" style={{ padding: "4px 8px", fontSize: 13, flex: "1 1 130px" }}
+                    value={editandoItem.data}
+                    onChange={(e) => onSetDataEditandoItem(e.target.value)} />
                   <input className="input" type="number" step="0.01" autoFocus
-                    style={{ padding: "4px 8px", fontSize: 13 }}
+                    style={{ padding: "4px 8px", fontSize: 13, flex: "1 1 100px" }}
                     value={editandoItem.valor}
-                    onChange={(e) => setValorEditandoItem(e.target.value)} />
+                    onChange={(e) => onSetValorEditandoItem(e.target.value)} />
                   <button type="button" className="btn btn-primary" style={{ padding: "4px 10px", fontSize: 12 }} onClick={onSalvarEdicaoItem}>✓</button>
                   <button type="button" className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={onCancelarEdicaoItem}>✕</button>
+                  <button type="button" className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12, color: "var(--red)" }}
+                    onClick={() => onExcluirCompra(p, i)}>🗑</button>
                 </div>
               ) : (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
@@ -287,7 +294,7 @@ function DetalheExpandido({
                     <strong>{formatCurrency(it.valor)}</strong>
                     {!somenteLeitura && (
                       <button type="button" className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }}
-                        onClick={() => onAbrirEdicaoItem(p, i, it.valor)} title="Editar valor">✎</button>
+                        onClick={() => onAbrirEdicaoItem(p, i, it.valor, it.data)} title="Editar">✎</button>
                     )}
                   </span>
                 </div>
@@ -361,12 +368,39 @@ function DetalheExpandido({
       {historico.length > 0 && (
         <div className="card" style={{ background: "var(--bg)" }}>
           <h3 style={{ fontSize: 14, marginBottom: 10 }}>Pagamentos</h3>
-          {historico.map((pg, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-              <span>{formatDate(pg.data)} · {labelForma(pg.formaPagamento)}{pg.conta ? ` (${pg.conta})` : ""}</span>
-              <strong>{formatCurrency(pg.valor)}</strong>
-            </div>
-          ))}
+          {historico.map((pg, i) => {
+            const editandoEsse = editandoPagamento?.pedido.id === pg.pedido.id && editandoPagamento?.pagamentoIndex === pg.pagamentoIndex;
+            return (
+              <div key={i} style={{ padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+                {editandoEsse ? (
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <input className="input" type="date" style={{ padding: "4px 8px", fontSize: 13, flex: "1 1 130px" }}
+                      value={editandoPagamento.data}
+                      onChange={(e) => onSetDataEditandoPagamento(e.target.value)} />
+                    <input className="input" type="number" step="0.01" autoFocus
+                      style={{ padding: "4px 8px", fontSize: 13, flex: "1 1 100px" }}
+                      value={editandoPagamento.valor}
+                      onChange={(e) => onSetValorEditandoPagamento(e.target.value)} />
+                    <button type="button" className="btn btn-primary" style={{ padding: "4px 10px", fontSize: 12 }} onClick={onSalvarEdicaoPagamento}>✓</button>
+                    <button type="button" className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={onCancelarEdicaoPagamento}>✕</button>
+                    <button type="button" className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12, color: "var(--red)" }}
+                      onClick={() => onExcluirPagamento(pg.pedido, pg.pagamentoIndex)}>🗑</button>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
+                    <span>{formatDate(pg.data)} · {labelForma(pg.formaPagamento)}{pg.conta ? ` (${pg.conta})` : ""}</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <strong>{formatCurrency(pg.valor)}</strong>
+                      {!somenteLeitura && (
+                        <button type="button" className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }}
+                          onClick={() => onAbrirEdicaoPagamento(pg.pedido, pg.pagamentoIndex, pg)} title="Editar">✎</button>
+                      )}
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -449,7 +483,8 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const [prazoUltimoChequeBaixa, setPrazoUltimoChequeBaixa] = useState("");
   const [descricaoBaixa, setDescricaoBaixa] = useState("");
   const [parcelasBaixaManual, setParcelasBaixaManual] = useState(null);
-  const [editandoItem, setEditandoItem] = useState(null); // { pedido, itemIndex, valor }
+  const [editandoItem, setEditandoItem] = useState(null); // { pedido, itemIndex, valor, data }
+  const [editandoPagamento, setEditandoPagamento] = useState(null); // { pedido, pagamentoIndex, valor, data }
 
   const [confirmando, setConfirmando] = useState(null);
   const [contaConfirmar, setContaConfirmar] = useState("");
@@ -459,8 +494,8 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
 
   const [toast, setToast] = useState("");
 
-  async function carregar() {
-    setCarregando(true);
+  async function carregar({ silencioso = false } = {}) {
+    if (!silencioso) setCarregando(true);
     const [lista, listaClientes] = await Promise.all([listarPedidos(), listarClientes()]);
     setPedidos(lista);
     setClientes(listaClientes);
@@ -603,10 +638,6 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     setParcelasBaixaManual(novas);
   }
 
-  function mudarBaseCheque(setter) {
-    return (v) => { setter(v); setParcelasBaixaManual(null); };
-  }
-
   async function confirmarBaixa() {
     if (!valorBaixa || Number(valorBaixa) <= 0) {
       mostrarToast("Informe um valor válido");
@@ -632,15 +663,19 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     });
     mostrarToast("Pagamento registrado!");
     setPedidoBaixa(null);
-    carregar();
+    carregar({ silencioso: true });
   }
 
-  function abrirEdicaoItem(pedido, itemIndex, valorAtual) {
-    setEditandoItem({ pedido, itemIndex, valor: String(valorAtual) });
+  function abrirEdicaoItem(pedido, itemIndex, valorAtual, dataAtual) {
+    setEditandoItem({ pedido, itemIndex, valor: String(valorAtual), data: dataAtual });
   }
 
   function setValorEditandoItem(valor) {
     setEditandoItem((atual) => (atual ? { ...atual, valor } : atual));
+  }
+
+  function setDataEditandoItem(data) {
+    setEditandoItem((atual) => (atual ? { ...atual, data } : atual));
   }
 
   async function salvarEdicaoItem() {
@@ -648,10 +683,55 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
       mostrarToast("Informe um valor válido");
       return;
     }
-    await editarItemPedido(editandoItem.pedido.id, editandoItem.pedido, editandoItem.itemIndex, Number(editandoItem.valor));
-    mostrarToast("Valor atualizado!");
+    await editarItemPedido(editandoItem.pedido.id, editandoItem.pedido, editandoItem.itemIndex, {
+      valor: Number(editandoItem.valor),
+      data: editandoItem.data,
+    });
+    mostrarToast("Compra atualizada!");
     setEditandoItem(null);
-    carregar();
+    carregar({ silencioso: true });
+  }
+
+  async function excluirCompra(pedido, itemIndex) {
+    if (!window.confirm("Excluir essa compra? Essa ação fica registrada no histórico de alterações.")) return;
+    await excluirItemPedido(pedido.id, pedido, itemIndex);
+    mostrarToast("Compra excluída.");
+    setEditandoItem(null);
+    carregar({ silencioso: true });
+  }
+
+  function abrirEdicaoPagamento(pedido, pagamentoIndex, pagamentoAtual) {
+    setEditandoPagamento({ pedido, pagamentoIndex, valor: String(pagamentoAtual.valor), data: pagamentoAtual.data });
+  }
+
+  function setValorEditandoPagamento(valor) {
+    setEditandoPagamento((atual) => (atual ? { ...atual, valor } : atual));
+  }
+
+  function setDataEditandoPagamento(data) {
+    setEditandoPagamento((atual) => (atual ? { ...atual, data } : atual));
+  }
+
+  async function salvarEdicaoPagamento() {
+    if (!editandoPagamento || !editandoPagamento.valor || Number(editandoPagamento.valor) <= 0) {
+      mostrarToast("Informe um valor válido");
+      return;
+    }
+    await editarPagamento(editandoPagamento.pedido.id, editandoPagamento.pedido, editandoPagamento.pagamentoIndex, {
+      valor: Number(editandoPagamento.valor),
+      data: editandoPagamento.data,
+    });
+    mostrarToast("Pagamento atualizado!");
+    setEditandoPagamento(null);
+    carregar({ silencioso: true });
+  }
+
+  async function excluirPagamentoAction(pedido, pagamentoIndex) {
+    if (!window.confirm("Excluir esse pagamento? O saldo do pedido volta a ficar em aberto por esse valor. Essa ação fica registrada no histórico.")) return;
+    await excluirPagamento(pedido.id, pedido, pagamentoIndex);
+    mostrarToast("Pagamento excluído.");
+    setEditandoPagamento(null);
+    carregar({ silencioso: true });
   }
 
   function abrirConfirmar(pedido, formaIndex) {
@@ -665,21 +745,21 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     await confirmarFormaPagamento(pedido.id, pedido, formaIndex, montarConta(contaConfirmar, contaConfirmarId));
     mostrarToast("Pagamento confirmado e baixado!");
     setConfirmando(null);
-    carregar();
+    carregar({ silencioso: true });
   }
 
   async function moverParaRecebidos(g) {
     await arquivarPedidos(g.pedidos.map((p) => p.id));
     mostrarToast("Cliente movido para Recebidos!");
     setExpandidos((atual) => { const n = new Set(atual); n.delete(g.chave); return n; });
-    carregar();
+    carregar({ silencioso: true });
   }
 
   async function moverParaComissoes(g) {
     await marcarComoPago(g.pedidos.map((p) => p.id));
     mostrarToast("Cliente movido para Comissões!");
     setExpandidos((atual) => { const n = new Set(atual); n.delete(g.chave); return n; });
-    carregar();
+    carregar({ silencioso: true });
   }
 
   function toggleSelecaoComissao(id) {
@@ -694,7 +774,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     await arquivarPedidos(Array.from(selecionadosComissao), { comissaoPaga: true });
     mostrarToast(`${selecionadosComissao.size} pedido(s) movido(s) para Recebidos!`);
     setSelecionadosComissao(new Set());
-    carregar();
+    carregar({ silencioso: true });
   }
 
   return (
@@ -770,7 +850,13 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
                   onEditarParcelaBaixa={editarParcelaBaixa} onRecalcularParcelasBaixa={() => setParcelasBaixaManual(null)}
                   descricaoBaixa={descricaoBaixa} setDescricaoBaixa={setDescricaoBaixa}
                   editandoItem={editandoItem} onAbrirEdicaoItem={abrirEdicaoItem} onCancelarEdicaoItem={() => setEditandoItem(null)}
-                  onSalvarEdicaoItem={salvarEdicaoItem} setValorEditandoItem={setValorEditandoItem}
+                  onSalvarEdicaoItem={salvarEdicaoItem}
+                  onSetValorEditandoItem={setValorEditandoItem} onSetDataEditandoItem={setDataEditandoItem}
+                  onExcluirCompra={excluirCompra}
+                  editandoPagamento={editandoPagamento} onAbrirEdicaoPagamento={abrirEdicaoPagamento}
+                  onCancelarEdicaoPagamento={() => setEditandoPagamento(null)} onSalvarEdicaoPagamento={salvarEdicaoPagamento}
+                  onSetValorEditandoPagamento={setValorEditandoPagamento} onSetDataEditandoPagamento={setDataEditandoPagamento}
+                  onExcluirPagamento={excluirPagamentoAction}
                   contaBaixa={contaBaixa} setContaBaixa={setContaBaixa} contaBaixaId={contaBaixaId} setContaBaixaId={setContaBaixaId}
                   confirmando={confirmando} onAbrirConfirmar={abrirConfirmar} onCancelarConfirmar={() => setConfirmando(null)} onConfirmarPixDeposito={confirmarPixDeposito}
                   contaConfirmar={contaConfirmar} setContaConfirmar={setContaConfirmar} contaConfirmarId={contaConfirmarId} setContaConfirmarId={setContaConfirmarId}
@@ -842,7 +928,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
           clientes={modalAberto.clientes}
           grupoNome={modalAberto.grupoNome}
           onClose={() => setModalAberto(null)}
-          onSaved={carregar}
+          onSaved={() => carregar({ silencioso: true })}
         />
       )}
     </div>

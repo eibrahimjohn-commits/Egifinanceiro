@@ -33,8 +33,8 @@ export default function Analises({ onAbrirNoVales }) {
   const [mostrarIgnoradas, setMostrarIgnoradas] = useState(false);
   const [mostrarImportarHist, setMostrarImportarHist] = useState(false);
 
-  async function carregarTudo() {
-    setCarregando(true);
+  async function carregarTudo({ silencioso = false } = {}) {
+    if (!silencioso) setCarregando(true);
     const [p, c] = await Promise.all([listarPedidos(), listarClientes()]);
     setPedidos(p);
     setClientes(c);
@@ -80,7 +80,7 @@ export default function Analises({ onAbrirNoVales }) {
       setResultadoHist({ sucesso: true, ...resultado, ignoradas: previewHist.ignoradas.length });
       setPreviewHist(null);
       // recarrega pedidos/clientes pra refletir na tela
-      await carregarTudo();
+      await carregarTudo({ silencioso: true });
     } catch (err) {
       setResultadoHist({ erro: err.message });
     } finally {
@@ -236,13 +236,19 @@ export default function Analises({ onAbrirNoVales }) {
     });
   }
 
-  // Heatmap simples por cidade/estado (contagem de pedidos)
+  // Heatmap por cidade/estado — usa o cadastro ATUAL do cliente (não a cópia
+  // gravada no pedido), pra não ficar preso em cidades desatualizadas se o
+  // cadastro for corrigido depois. Mostra até 20 cidades (não só as 10 mais
+  // vendidas), pra dar uma visão mais completa da distribuição real.
   const porCidade = {};
   pedidos.forEach((p) => {
-    const chave = `${p.clienteCidade || "?"}/${p.clienteEstado || "?"}`;
+    const cliente = clientesPorId[p.clienteId];
+    const cidade = cliente?.cidade || p.clienteCidade || "?";
+    const estado = cliente?.estado || p.clienteEstado || "?";
+    const chave = `${cidade}/${estado}`;
     porCidade[chave] = (porCidade[chave] || 0) + Number(p.valor || 0);
   });
-  const cidadesOrdenadas = Object.entries(porCidade).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const cidadesOrdenadas = Object.entries(porCidade).sort((a, b) => b[1] - a[1]).slice(0, 20);
   const maxValor = cidadesOrdenadas[0]?.[1] || 1;
 
   return (
@@ -479,7 +485,7 @@ export default function Analises({ onAbrirNoVales }) {
           clientes={modalAberto.clientes}
           grupoNome={modalAberto.grupoNome}
           onClose={() => setModalAberto(null)}
-          onSaved={carregarTudo}
+          onSaved={() => carregarTudo({ silencioso: true })}
         />
       )}
     </div>

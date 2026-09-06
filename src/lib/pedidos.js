@@ -10,7 +10,8 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { todayISO, valorDevidoDoPedido, saldoDoPedido, calcularValorDevido } from "./constants";
+import { todayISO, valorDevidoDoPedido, valorPagoDoPedido, saldoDoPedido, calcularValorDevido } from "./constants";
+import { registrarLog } from "./auditoria";
 
 const pedidosRef = collection(db, "pedidos");
 
@@ -96,7 +97,7 @@ export async function confirmarFormaPagamento(pedidoId, pedidoAtual, formaIndex,
   formas[formaIndex] = { ...forma, confirmado: true, conta: conta || null, dataConfirmacao: dataISO };
 
   const valorDevido = valorDevidoDoPedido(pedidoAtual);
-  const novoValorPago = Number(pedidoAtual.valorPago || 0) + Number(forma.valor);
+  const novoValorPago = valorPagoDoPedido({ ...pedidoAtual, formasPagamento: formas });
   const novoStatus = novoValorPago >= valorDevido - 0.01 ? "pago" : "aberto";
 
   const historico = [...(pedidoAtual.pagamentos || [])];
@@ -116,10 +117,8 @@ export async function confirmarFormaPagamento(pedidoId, pedidoAtual, formaIndex,
 // Registra uma baixa (pagamento) em um pedido em aberto
 export async function registrarBaixa(pedidoId, pedidoAtual, baixa) {
   const valorDevido = valorDevidoDoPedido(pedidoAtual);
-  const novoValorPago = Number(pedidoAtual.valorPago || 0) + Number(baixa.valor);
-  const novoStatus = novoValorPago >= valorDevido - 0.01 ? "pago" : "aberto";
 
-  const historico = pedidoAtual.pagamentos || [];
+  const historico = [...(pedidoAtual.pagamentos || [])];
   historico.push({
     valor: Number(baixa.valor),
     data: baixa.data,
@@ -136,6 +135,9 @@ export async function registrarBaixa(pedidoId, pedidoAtual, baixa) {
     } : {}),
   });
 
+  const novoValorPago = valorPagoDoPedido({ ...pedidoAtual, pagamentos: historico });
+  const novoStatus = novoValorPago >= valorDevido - 0.01 ? "pago" : "aberto";
+
   await updateDoc(doc(db, "pedidos", pedidoId), {
     valorPago: novoValorPago,
     valorDevido,
@@ -146,43 +148,152 @@ export async function registrarBaixa(pedidoId, pedidoAtual, baixa) {
   return novoStatus;
 }
 
-// Edita o valor de um item (uma "compra" avulsa) dentro de um pedido. O
-// valor total e o valor devido são sempre recalculados a partir da soma dos
-// itens (com o desconto do pedido aplicado) — nunca ficam desatualizados.
-// Guarda no próprio pedido um histórico de todas as edições feitas, pra
-// manter rastreabilidade de quem mudou o quê.
-export async function editarItemPedido(pedidoId, pedidoAtual, itemIndex, novoValor) {
+// Recalcula e grava valor/valorDevido/valorPago/status de um pedido a partir
+// dos itens e pagamentos atuais — usado depois de qualquer edição/exclusão,
+// pra nunca deixar esses campos desatualizados.
+async function recalcularEGravar(pedidoId, pedidoAtualizado, camposExtras) {
+  const valorBruto = (pedidoAtualizado.itens || []).reduce((s, it) => s + (Number(it.valor) || 0), 0);
+  const valorDevido = calcularValorDevido(valorBruto, pedidoAtualizado.desconto);
+  const valorPago = valorPagoDoPedido(pedidoAtualizado);
+  const status = valorPago >= valorDevido - 0.01 ? "pago" : "aberto";
+  await updateDoc(doc(db, "pedidos", pedidoId), {
+    ...camposExtras,
+    valor: valorBruto,
+    valorDevido,
+    valorPago,
+    status,
+  });
+  return { valorBruto, valorDevido, valorPago, status };
+}
+
+// Edita valor e/ou data de um item (uma "compra" avulsa) dentro de um
+// pedido. O total e o valor devido são sempre recalculados a partir da soma
+// dos itens — nunca ficam desatualizados. Registra no próprio pedido e no
+// log central de auditoria.
+export async function editarItemPedido(pedidoId, pedidoAtual, itemIndex, camposEditados) {
   const itens = [...(pedidoAtual.itens || [])];
   const itemAtual = itens[itemIndex];
   if (!itemAtual) throw new Error("Item não encontrado nesse pedido");
 
-  const valorAnterior = Number(itemAtual.valor) || 0;
-  const valorNovo = Number(novoValor) || 0;
-  itens[itemIndex] = { ...itemAtual, valor: valorNovo };
+  const novoValor = camposEditados.valor !== undefined ? Number(camposEditados.valor) || 0 : itemAtual.valor;
+  const novaData = camposEditados.data !== undefined ? camposEditados.data : itemAtual.data;
+  itens[itemIndex] = { ...itemAtual, valor: novoValor, data: novaData };
 
-  const valorBruto = itens.reduce((s, it) => s + (Number(it.valor) || 0), 0);
-  const valorDevido = calcularValorDevido(valorBruto, pedidoAtual.desconto);
-  const valorPago = Number(pedidoAtual.valorPago) || 0;
-  const status = valorPago >= valorDevido - 0.01 ? "pago" : "aberto";
+  const descricaoPartes = [];
+  if (camposEditados.valor !== undefined && novoValor !== itemAtual.valor) descricaoPartes.push(`valor ${itemAtual.valor} → ${novoValor}`);
+  if (camposEditados.data !== undefined && novaData !== itemAtual.data) descricaoPartes.push(`data ${itemAtual.data} → ${novaData}`);
 
   const historicoEdicoes = [...(pedidoAtual.historicoEdicoes || [])];
-  historicoEdicoes.push({
-    data: new Date().toISOString(),
-    itemIndex,
-    dataItem: itemAtual.data,
-    valorAnterior,
-    valorNovo,
+  historicoEdicoes.push({ data: new Date().toISOString(), tipo: "edicao_item", itemIndex, dataItem: itemAtual.data, valorAnterior: itemAtual.valor, valorNovo: novoValor });
+
+  const resultado = await recalcularEGravar(pedidoId, { ...pedidoAtual, itens }, { itens, historicoEdicoes });
+
+  await registrarLog({
+    tipo: "edicao_item",
+    pedidoId,
+    clienteNome: pedidoAtual.clienteNome,
+    descricao: `Compra de ${itemAtual.data} — ${descricaoPartes.join(", ") || "sem alteração"}`,
+    valorAnterior: itemAtual.valor,
+    valorNovo: novoValor,
   });
 
-  await updateDoc(doc(db, "pedidos", pedidoId), {
-    itens,
-    valor: valorBruto,
-    valorDevido,
-    status,
-    historicoEdicoes,
+  return resultado;
+}
+
+// Exclui um item (uma "compra" avulsa) de dentro de um pedido.
+export async function excluirItemPedido(pedidoId, pedidoAtual, itemIndex) {
+  const itens = [...(pedidoAtual.itens || [])];
+  const itemRemovido = itens[itemIndex];
+  if (!itemRemovido) throw new Error("Item não encontrado nesse pedido");
+  itens.splice(itemIndex, 1);
+
+  const historicoEdicoes = [...(pedidoAtual.historicoEdicoes || [])];
+  historicoEdicoes.push({ data: new Date().toISOString(), tipo: "exclusao_item", dataItem: itemRemovido.data, valorAnterior: itemRemovido.valor, valorNovo: null });
+
+  const resultado = await recalcularEGravar(pedidoId, { ...pedidoAtual, itens }, { itens, historicoEdicoes });
+
+  await registrarLog({
+    tipo: "exclusao_item",
+    pedidoId,
+    clienteNome: pedidoAtual.clienteNome,
+    descricao: `Compra de ${itemRemovido.data} excluída`,
+    valorAnterior: itemRemovido.valor,
+    valorNovo: null,
   });
 
-  return { valorBruto, valorDevido, status };
+  return resultado;
+}
+
+// Edita valor, data e/ou forma de um pagamento (baixa) já registrado. O
+// saldo do pedido se recalcula sozinho a partir disso.
+export async function editarPagamento(pedidoId, pedidoAtual, pagamentoIndex, camposEditados) {
+  const pagamentos = [...(pedidoAtual.pagamentos || [])];
+  const pagamentoAtual = pagamentos[pagamentoIndex];
+  if (!pagamentoAtual) throw new Error("Pagamento não encontrado nesse pedido");
+
+  const novoValor = camposEditados.valor !== undefined ? Number(camposEditados.valor) || 0 : pagamentoAtual.valor;
+  const novaData = camposEditados.data !== undefined ? camposEditados.data : pagamentoAtual.data;
+  pagamentos[pagamentoIndex] = { ...pagamentoAtual, valor: novoValor, data: novaData };
+
+  const descricaoPartes = [];
+  if (novoValor !== pagamentoAtual.valor) descricaoPartes.push(`valor ${pagamentoAtual.valor} → ${novoValor}`);
+  if (novaData !== pagamentoAtual.data) descricaoPartes.push(`data ${pagamentoAtual.data} → ${novaData}`);
+
+  const historicoEdicoes = [...(pedidoAtual.historicoEdicoes || [])];
+  historicoEdicoes.push({ data: new Date().toISOString(), tipo: "edicao_pagamento", pagamentoIndex, dataPagamento: pagamentoAtual.data, valorAnterior: pagamentoAtual.valor, valorNovo: novoValor });
+
+  const resultado = await recalcularEGravar(pedidoId, { ...pedidoAtual, pagamentos }, { pagamentos, historicoEdicoes });
+
+  await registrarLog({
+    tipo: "edicao_pagamento",
+    pedidoId,
+    clienteNome: pedidoAtual.clienteNome,
+    descricao: `Pagamento de ${pagamentoAtual.data} — ${descricaoPartes.join(", ") || "sem alteração"}`,
+    valorAnterior: pagamentoAtual.valor,
+    valorNovo: novoValor,
+  });
+
+  return resultado;
+}
+
+// Exclui um pagamento (baixa) já registrado. O saldo volta a ficar em aberto
+// pelo valor removido, automaticamente (via recálculo do valorPago).
+export async function excluirPagamento(pedidoId, pedidoAtual, pagamentoIndex) {
+  const pagamentos = [...(pedidoAtual.pagamentos || [])];
+  const pagamentoRemovido = pagamentos[pagamentoIndex];
+  if (!pagamentoRemovido) throw new Error("Pagamento não encontrado nesse pedido");
+  pagamentos.splice(pagamentoIndex, 1);
+
+  const historicoEdicoes = [...(pedidoAtual.historicoEdicoes || [])];
+  historicoEdicoes.push({ data: new Date().toISOString(), tipo: "exclusao_pagamento", dataPagamento: pagamentoRemovido.data, valorAnterior: pagamentoRemovido.valor, valorNovo: null });
+
+  const resultado = await recalcularEGravar(pedidoId, { ...pedidoAtual, pagamentos }, { pagamentos, historicoEdicoes });
+
+  await registrarLog({
+    tipo: "exclusao_pagamento",
+    pedidoId,
+    clienteNome: pedidoAtual.clienteNome,
+    descricao: `Pagamento de ${pagamentoRemovido.data} (${pagamentoRemovido.formaPagamento}) excluído`,
+    valorAnterior: pagamentoRemovido.valor,
+    valorNovo: null,
+  });
+
+  return resultado;
+}
+
+// Edita a data geral de lançamento do pedido (a que aparece no topo do card).
+export async function editarDataPedido(pedidoId, pedidoAtual, novaData) {
+  const dataAnterior = pedidoAtual.data;
+  await updateDoc(doc(db, "pedidos", pedidoId), { data: novaData });
+
+  await registrarLog({
+    tipo: "edicao_data_pedido",
+    pedidoId,
+    clienteNome: pedidoAtual.clienteNome,
+    descricao: "Data do pedido alterada",
+    valorAnterior: dataAnterior,
+    valorNovo: novaData,
+  });
 }
 
 // Importa pedidos do histórico legado (planilha Pranchteta/PAGOS), linkando com

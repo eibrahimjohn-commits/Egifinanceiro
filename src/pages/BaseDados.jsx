@@ -99,6 +99,7 @@ export default function BaseDados() {
   const [progressoEnriq, setProgressoEnriq] = useState(null);
   const pararEnriqRef = useRef(false);
   const [analiseDup, setAnaliseDup] = useState(null);
+  const [ferramentaAberta, setFerramentaAberta] = useState(null); // 'importar' | 'duplicados' | 'enriquecer' | null
   const [removendoDup, setRemovendoDup] = useState(false);
   const [gruposExpandidos, setGruposExpandidos] = useState(new Set());
 
@@ -118,8 +119,8 @@ export default function BaseDados() {
     setModalAberto({ clientes: [c] });
   }
 
-  async function carregar() {
-    setCarregando(true);
+  async function carregar({ silencioso = false } = {}) {
+    if (!silencioso) setCarregando(true);
     const [lista, pedidos] = await Promise.all([listarClientes(), listarPedidos()]);
     setClientes(lista);
 
@@ -148,7 +149,7 @@ export default function BaseDados() {
       const n = await removerDuplicados(analiseDup.paraRemover);
       mostrarToast(`${n} cadastros duplicados removidos.`);
       setAnaliseDup(null);
-      await carregar();
+      await carregar({ silencioso: true });
     } catch (err) {
       mostrarToast("Erro ao remover: " + err.message);
     } finally {
@@ -167,7 +168,7 @@ export default function BaseDados() {
         deveParar: () => pararEnriqRef.current,
       });
       mostrarToast(`Concluído: ${resultado.sucesso} atualizados, ${resultado.falhas} sem retorno.`);
-      carregar();
+      carregar({ silencioso: true });
     } catch (err) {
       mostrarToast("Erro: " + err.message);
     } finally {
@@ -217,7 +218,7 @@ export default function BaseDados() {
       } else {
         mostrarToast(`${totalPlanilha} clientes importados. Base agora tem ${lista.length}.`);
       }
-      carregar();
+      carregar({ silencioso: true });
     } catch (err) {
       mostrarToast("Erro ao importar: " + err.message);
     } finally {
@@ -336,7 +337,21 @@ export default function BaseDados() {
     <div>
       {toast && <div className="toast">{toast}</div>}
 
+      {!ferramentaAberta && !preview && !importando && !analiseDup && !removendoDup && !enriquecendo ? (
+        <div className="card" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn btn-secondary" style={{ flex: "1 1 220px" }} onClick={() => setFerramentaAberta("importar")}>
+            📥 Importar planilha
+          </button>
+          <button className="btn btn-secondary" style={{ flex: "1 1 220px" }} onClick={() => setFerramentaAberta("duplicados")}>
+            🧹 Limpar duplicados
+          </button>
+          <button className="btn btn-secondary" style={{ flex: "1 1 220px" }} onClick={() => setFerramentaAberta("enriquecer")}>
+            🌐 Dados públicos em lote{pendentesEnriquecimento > 0 ? ` (${pendentesEnriquecimento})` : ""}
+          </button>
+        </div>
+      ) : (
       <div className="ferramentas-grid">
+      {(ferramentaAberta === "importar" || preview || importando) && (
       <div className={"card ferramenta-card" + (preview || importando ? " ferramenta-expandida" : "")}>
         <h2 className="card-title">Importar planilha</h2>
         {!preview ? (
@@ -350,6 +365,9 @@ export default function BaseDados() {
               <input type="file" accept=".xlsx,.xls" style={{ display: "none" }}
                 onChange={handleArquivoSelecionado} />
             </label>
+            <button type="button" className="btn btn-ghost" style={{ marginTop: 10, fontSize: 13 }} onClick={() => setFerramentaAberta(null)}>
+              Recolher
+            </button>
           </>
         ) : importando ? (
           <div className="empty-state">
@@ -399,7 +417,9 @@ export default function BaseDados() {
           </>
         )}
       </div>
+      )}
 
+      {(ferramentaAberta === "duplicados" || analiseDup || removendoDup) && (
       <div className={"card ferramenta-card" + (analiseDup || removendoDup ? " ferramenta-expandida" : "")}>
         <h2 className="card-title">Limpar duplicados</h2>
         {!analiseDup ? (
@@ -410,6 +430,9 @@ export default function BaseDados() {
             </p>
             <button className="btn btn-secondary btn-block" onClick={handleAnalisarDuplicados}>
               Procurar duplicados
+            </button>
+            <button type="button" className="btn btn-ghost" style={{ marginTop: 10, fontSize: 13 }} onClick={() => setFerramentaAberta(null)}>
+              Recolher
             </button>
           </>
         ) : removendoDup ? (
@@ -445,7 +468,9 @@ export default function BaseDados() {
           </>
         )}
       </div>
+      )}
 
+      {(ferramentaAberta === "enriquecer" || enriquecendo) && (
       <div className={"card ferramenta-card" + (enriquecendo ? " ferramenta-expandida" : "")}>
         <h2 className="card-title">Dados públicos em lote</h2>
         {!enriquecendo ? (
@@ -459,6 +484,9 @@ export default function BaseDados() {
             <button className="btn btn-secondary btn-block" onClick={handleEnriquecerTodos}
               disabled={pendentesEnriquecimento === 0}>
               Buscar dados públicos dos clientes
+            </button>
+            <button type="button" className="btn btn-ghost" style={{ marginTop: 10, fontSize: 13 }} onClick={() => setFerramentaAberta(null)}>
+              Recolher
             </button>
           </>
         ) : (
@@ -483,8 +511,10 @@ export default function BaseDados() {
           </>
         )}
       </div>
+      )}
 
       </div>
+      )}
 
       <div className="card">
         <div className="field" style={{ marginBottom: 10 }}>
@@ -552,7 +582,7 @@ export default function BaseDados() {
           grupoNome={modalAberto.grupoNome}
           novo={modalAberto.novo}
           onClose={() => setModalAberto(null)}
-          onSaved={carregar}
+          onSaved={() => carregar({ silencioso: true })}
         />
       )}
     </div>
