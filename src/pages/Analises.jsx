@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarPedidos, importarHistoricoPedidos } from "../lib/pedidos";
+import { listarPedidos, importarHistoricoPedidos, marcarConferido } from "../lib/pedidos";
 import { listarClientes, registrarContatoInativo } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
-import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido } from "../lib/constants";
+import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido } from "../lib/constants";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 
 const DIAS_INATIVO = 60;
@@ -44,6 +44,14 @@ export default function Analises({ onAbrirNoVales }) {
   useEffect(() => { carregarTudo(); }, []);
 
   if (carregando) return <div className="empty-state">Carregando análises...</div>;
+
+  async function handleConferido(pedidoId) {
+    await marcarConferido([pedidoId]);
+    // Atualiza localmente pra sumir da lista na hora, sem recarregar tudo.
+    const ate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    setPedidos((atual) => atual.map((p) => (p.id === pedidoId ? { ...p, conferidoAte: ate } : p)));
+    mostrarToastGenerico("Marcado como conferido — volta a aparecer em 24h.");
+  }
 
   async function handleContatoRealizado(clienteId) {
     await registrarContatoInativo(clienteId);
@@ -363,18 +371,26 @@ export default function Analises({ onAbrirNoVales }) {
             {atrasados.length === 0 ? (
               <div className="empty-state" style={{ padding: 12 }}>Nenhum pagamento atrasado.</div>
             ) : (
-              atrasados.map((p) => (
-                <div key={p.id} className="list-item" onClick={() => onAbrirNoVales?.(p)}
-                  onDoubleClick={() => abrirClientePorId(p.clienteId, p.clienteNome)}>
-                  <div>
-                    <strong>{clientesPorId[p.clienteId]?.nome || p.clienteNome}</strong>
-                    <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                      Pedido em {formatDate(p.data)} · {formatCurrency(saldoDoPedido(p))}
+              atrasados.map((p) => {
+                const situacao = situacaoEmAbertoDoPedido(p);
+                return (
+                  <div key={p.id} className="list-item" onClick={() => onAbrirNoVales?.(p)}
+                    onDoubleClick={() => abrirClientePorId(p.clienteId, p.clienteNome)}
+                    style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <strong>{clientesPorId[p.clienteId]?.nome || p.clienteNome}</strong>
+                      <span className="badge badge-atraso" style={{ flexShrink: 0 }}>Atrasado</span>
                     </div>
+                    <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                      Em aberto desde {formatDate(situacao?.dataRef || p.data)} · {formatCurrency(saldoDoPedido(p))}
+                    </div>
+                    <button className="btn btn-secondary" style={{ fontSize: 12, padding: "6px 10px", alignSelf: "flex-start" }}
+                      onClick={(e) => { e.stopPropagation(); handleConferido(p.id); }}>
+                      Conferido (some por 24h)
+                    </button>
                   </div>
-                  <span className="badge badge-atraso">Atrasado</span>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

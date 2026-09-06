@@ -109,15 +109,64 @@ function checkpointsDoPrazo(prazoDias) {
   return checkpoints;
 }
 
-export function pedidoEstaAtrasado(pedido) {
-  if (pedido.status !== "aberto" || pedido.arquivado) return false;
-  const valorTotal = valorDevidoDoPedido(pedido);
-  if (valorTotal <= 0) return false;
-  const percentualPago = valorPagoDoPedido(pedido) / valorTotal * 100;
-  const diasPassados = (Date.now() - new Date(pedido.data + "T00:00:00").getTime()) / 86400000;
+// Um pedido pode ser marcado como "conferido" — some da lista de atrasados por
+// 24h, pra quem já ligou/cobrou não ficar vendo o mesmo nome no dia seguinte.
+export function estaConferido(pedido) {
+  if (!pedido?.conferidoAte) return false;
+  return new Date(pedido.conferidoAte).getTime() > Date.now();
+}
 
+// Descobre qual é a PRIMEIRA compra ainda em aberto de um pedido, aplicando os
+// pagamentos em ordem cronológica (o dinheiro que entra quita primeiro as
+// compras mais antigas). É essa data que vale pra contar atraso — não a data do
+// pedido inteiro.
+//
+// Exemplo: comprou em 01/08, pagou metade; comprou de novo em 01/09. Como a
+// metade paga cobre a compra de 01/08 inteira, a referência de atraso passa a
+// ser 01/09, não 01/08. Assim o cliente não fica marcado como atrasado por uma
+// compra que ele já quitou.
+export function situacaoEmAbertoDoPedido(pedido) {
+  const itens = [...(pedido.itens || [])]
+    .filter((it) => it.data)
+    .sort((a, b) => String(a.data).localeCompare(String(b.data)));
+
+  const pago = valorPagoDoPedido(pedido);
+
+  // Pedido sem itens detalhados (legado): cai pro comportamento antigo, usando
+  // a data e o total do pedido como um bloco só.
+  if (itens.length === 0) {
+    const total = valorDevidoDoPedido(pedido);
+    if (total <= 0 || pago >= total - 0.01) return null;
+    return { dataRef: pedido.data, percentualPago: (pago / total) * 100 };
+  }
+
+  let credito = pago;
+  let idxPrimeiroAberto = -1;
+  for (let i = 0; i < itens.length; i++) {
+    const v = Number(itens[i].valor) || 0;
+    if (credito >= v - 0.01) { credito -= v; continue; }
+    idxPrimeiroAberto = i;
+    break;
+  }
+  if (idxPrimeiroAberto === -1) return null; // tudo quitado
+
+  const restantes = itens.slice(idxPrimeiroAberto);
+  const totalRestante = restantes.reduce((s, it) => s + (Number(it.valor) || 0), 0);
+  const percentualPago = totalRestante > 0 ? (credito / totalRestante) * 100 : 100;
+
+  return { dataRef: itens[idxPrimeiroAberto].data, percentualPago, totalRestante };
+}
+
+export function pedidoEstaAtrasado(pedido) {
+  if (pedido.arquivado) return false;
+  if (estaConferido(pedido)) return false;
+
+  const situacao = situacaoEmAbertoDoPedido(pedido);
+  if (!situacao || !situacao.dataRef) return false;
+
+  const diasPassados = (Date.now() - new Date(situacao.dataRef + "T00:00:00").getTime()) / 86400000;
   const checkpoints = checkpointsDoPrazo(Number(pedido.clientePrazo));
-  return checkpoints.some((cp) => diasPassados >= cp.dias && percentualPago + 0.01 < cp.percentualMinimo);
+  return checkpoints.some((cp) => diasPassados >= cp.dias && situacao.percentualPago + 0.01 < cp.percentualMinimo);
 }
 
 // Extrai o percentual numérico de um texto livre de desconto, ex: "5% à vista" -> 5
@@ -180,8 +229,15 @@ export function descontoAplicavelAoPedido(descontoPadrao, prazoDias) {
 // solto que possa ficar desatualizado ou divergir do que está listado em
 // "Compras". Pedidos sem itens (não deveria acontecer, mas por segurança)
 // caem pro campo valor/valorDevido gravado.
+// PROTEÇÃO DE DADOS — só pedidos marcados com `calculoAoVivo` têm o total
+// recalculado a partir dos itens. Todo pedido antigo (importado da planilha ou
+// criado antes dessa regra existir) NÃO tem essa marca, então usa o valor que
+// está gravado e nunca mais muda sozinho por causa de mudança de lógica.
+// Quando alguém edita um item/pagamento de um pedido antigo, aí sim ele passa a
+// ser marcado como "ao vivo" — porque foi uma alteração deliberada, não um
+// efeito colateral de deploy.
 export function valorDevidoDoPedido(p) {
-  if (p.itens?.length > 0) {
+  if (p.calculoAoVivo && p.itens?.length > 0) {
     const bruto = p.itens.reduce((s, it) => s + (Number(it.valor) || 0), 0);
     return calcularValorDevido(bruto, p.desconto);
   }
@@ -196,6 +252,7 @@ export function valorDevidoDoPedido(p) {
 // Só dinheiro/cheque/conta de 3º contam direto pela formasPagamento, porque
 // esses nunca geram uma entrada em "pagamentos" (já são recebidos na hora).
 export function valorPagoDoPedido(p) {
+  if (!p.calculoAoVivo) return Number(p.valorPago) || 0;
   const dasFormas = (p.formasPagamento || []).reduce((s, f) => {
     if (FORMAS_RECEBIMENTO_IMEDIATO.includes(f.tipo)) return s + (Number(f.valor) || 0);
     return s;

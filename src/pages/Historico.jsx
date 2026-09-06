@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import "../components/ui.css";
 import { listarLogs } from "../lib/auditoria";
 import { formatCurrency, formatDate } from "../lib/constants";
+import { gerarBackupPlanilha } from "../lib/backup";
 
 const ROTULOS_TIPO = {
   edicao_item: { label: "Compra editada", cor: "var(--grape)" },
@@ -22,6 +23,21 @@ export default function Historico() {
   const [carregando, setCarregando] = useState(true);
   const [filtro, setFiltro] = useState("");
   const [filtroTipo, setFiltroTipo] = useState("");
+  const [gerandoBackup, setGerandoBackup] = useState(false);
+  const [avisoBackup, setAvisoBackup] = useState("");
+
+  async function handleBackup() {
+    setGerandoBackup(true);
+    setAvisoBackup("");
+    try {
+      const r = await gerarBackupPlanilha();
+      setAvisoBackup(`Backup gerado: ${r.clientes} clientes, ${r.pedidos} pedidos, ${r.movimentos} movimentos.`);
+    } catch (err) {
+      setAvisoBackup("Erro ao gerar backup: " + err.message);
+    } finally {
+      setGerandoBackup(false);
+    }
+  }
 
   useEffect(() => {
     listarLogs().then((lista) => {
@@ -38,6 +54,21 @@ export default function Historico() {
 
   return (
     <div>
+      <div className="card">
+        <h2 className="card-title">Backup em planilha</h2>
+        <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+          Baixa um .xlsx com tudo que está no sistema hoje: cadastro de clientes, pedidos
+          com seus totais, e o detalhe de cada compra e pagamento. Guarde uma cópia
+          periodicamente — é a sua segunda via caso algo dê errado no banco.
+        </p>
+        <button className="btn btn-secondary" onClick={handleBackup} disabled={gerandoBackup}>
+          {gerandoBackup ? "Gerando..." : "Baixar backup completo (.xlsx)"}
+        </button>
+        {avisoBackup && (
+          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 10 }}>{avisoBackup}</div>
+        )}
+      </div>
+
       <div className="card" style={{ padding: 12 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
           <input className="input" style={{ flex: "2 1 220px" }} placeholder="Buscar por cliente..."

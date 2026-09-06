@@ -89,18 +89,78 @@ export default async function handler(req, res) {
   // Reduzido de 6 pra 3 páginas simultâneas: se a Base Empresarial estiver
   // limitando por taxa de requisições (rate limit), poucas chamadas ao mesmo
   // tempo reduzem a chance de disparar isso.
-  const PAGINAS_PARALELAS = 3;
-  const PER_PAGE = 100;
+  // Buscamos em série (não em paralelo) com pausa entre as páginas. Três
+  // chamadas simultâneas pesadas são um jeito clássico de derrubar uma API de
+  // terceiro — e o erro que aparecia era justamente HTTP 500 (erro interno do
+  // lado deles), não 401/403 de credencial.
+  const MAX_PAGINAS = 3;
+  const PER_PAGE = 50;
+  const TIMEOUT_MS = 12000;
+  const TENTATIVAS_POR_PAGINA = 3;
 
   const paginaInicial = Math.max(1, parseInt(pagina, 10) || 1);
 
   function montarUrl(pagina) {
     const params = new URLSearchParams();
     params.append("filter[city_ibge_code]", String(municipio.id));
-    params.append("sort", "-activity_start_date");
+    // Sem "sort": ordenar por data em cidades grandes obriga a API a varrer a
+    // base inteira antes de responder, e é o suspeito nº1 do erro 500 —
+    // Porto Alegre tem dezenas de milhares de empresas. A ordem não importa
+    // aqui, já que filtramos por CNAE do nosso lado de qualquer jeito.
     params.append("per_page", String(PER_PAGE));
     params.append("page", String(pagina));
     return `https://app.baseempresarial.com.br/api/v1/establishments?${params.toString()}`;
+  }
+
+  function pausa(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  // Se existir uma chave de API configurada nas variáveis de ambiente da
+  // Vercel, ela é enviada. A API pode ter passado a exigir autenticação.
+  function montarHeaders() {
+    const headers = { Accept: "application/json" };
+    const token = process.env.BASE_EMPRESARIAL_TOKEN;
+    if (token) headers.Authorization = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+    return headers;
+  }
+
+  async function buscarPagina(p) {
+    let ultimoErro;
+    for (let tentativa = 1; tentativa <= TENTATIVAS_POR_PAGINA; tentativa++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      try {
+        const r = await fetch(montarUrl(p), { headers: montarHeaders(), signal: controller.signal });
+        const textoBruto = await r.text();
+        let json;
+        try {
+          json = textoBruto ? JSON.parse(textoBruto) : {};
+        } catch {
+          const erro = new Error(`Resposta não-JSON da Base Empresarial (status ${r.status}).`);
+          erro.detalhe = { status: r.status, trechoResposta: textoBruto.slice(0, 300) };
+          throw erro;
+        }
+        if (!r.ok) {
+          const erro = new Error(`(HTTP ${r.status}) ` + (json?.message || `Falha na página ${p}`));
+          erro.detalhe = { status: r.status, corpo: json };
+          erro.status = r.status;
+          throw erro;
+        }
+        return json;
+      } catch (e) {
+        ultimoErro = e;
+        // 4xx é problema do pedido (credencial, filtro inválido) — repetir não
+        // adianta. Só 5xx e timeout valem nova tentativa, com espera crescente.
+        const status = e.status || 0;
+        const valeRetentar = status === 0 || status >= 500 || status === 429;
+        if (!valeRetentar || tentativa === TENTATIVAS_POR_PAGINA) break;
+        await pausa(800 * tentativa);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw ultimoErro;
   }
 
   function cnaeBate(item, alvoDigitos) {
@@ -108,43 +168,39 @@ export default async function handler(req, res) {
   }
 
   try {
-    const paginas = Array.from({ length: PAGINAS_PARALELAS }, (_, i) => paginaInicial + i);
-    const respostas = await Promise.allSettled(
-      paginas.map(async (p) => {
-        const r = await fetch(montarUrl(p), { headers: { Accept: "application/json" } });
-        const textoBruto = await r.text();
-        let json;
-        try {
-          json = textoBruto ? JSON.parse(textoBruto) : {};
-        } catch {
-          // A resposta não veio em JSON (ex: página de erro em HTML) — guarda
-          // o início do texto bruto pra dar uma pista melhor do que houve.
-          const erro = new Error(`Resposta inesperada da Base Empresarial (status ${r.status}, não é JSON).`);
-          erro.detalhe = { status: r.status, trechoResposta: textoBruto.slice(0, 300) };
-          throw erro;
-        }
-        if (!r.ok) {
-          const erro = new Error(`(HTTP ${r.status}) ` + (json?.message || `Falha na página ${p}`));
-          erro.detalhe = json;
-          throw erro;
-        }
-        return json;
-      })
-    );
-
     let brutos = [];
     let primeiraFalha = null;
-    respostas.forEach((r) => {
-      if (r.status === "fulfilled") {
-        brutos = brutos.concat(extrairLista(r.value));
-      } else if (!primeiraFalha) {
-        primeiraFalha = r.reason;
+
+    // Sequencial: se a primeira página já funciona, o resto é bônus. Assim uma
+    // falha na página 2 não joga fora os resultados que a página 1 trouxe.
+    for (let i = 0; i < MAX_PAGINAS; i++) {
+      const p = paginaInicial + i;
+      try {
+        const json = await buscarPagina(p);
+        const lista = extrairLista(json);
+        brutos = brutos.concat(lista);
+        if (lista.length < PER_PAGE) break; // acabaram os resultados
+        if (i < MAX_PAGINAS - 1) await pausa(300);
+      } catch (e) {
+        if (!primeiraFalha) primeiraFalha = e;
+        break; // não insiste nas páginas seguintes se essa já falhou
       }
-    });
+    }
 
     if (brutos.length === 0 && primeiraFalha) {
+      const status = primeiraFalha.status || 0;
+      let dica = "";
+      if (status >= 500) {
+        dica = " Esse é um erro interno do servidor da Base Empresarial (não do EGI Financeiro). Tente de novo em alguns minutos; se persistir, vale checar com eles se o serviço/assinatura está ativo.";
+      } else if (status === 401 || status === 403) {
+        dica = " A API recusou o acesso — provavelmente falta uma chave de API. Configure BASE_EMPRESARIAL_TOKEN nas variáveis de ambiente da Vercel.";
+      } else if (status === 429) {
+        dica = " Excesso de consultas em pouco tempo. Espere um pouco e tente de novo.";
+      } else if (status === 0) {
+        dica = " A consulta demorou demais e foi interrompida.";
+      }
       return res.status(502).json({
-        erro: "Erro ao consultar a Base Empresarial: " + String(primeiraFalha.message || primeiraFalha),
+        erro: "Erro ao consultar a Base Empresarial: " + String(primeiraFalha.message || primeiraFalha) + dica,
         detalhe: primeiraFalha.detalhe,
       });
     }
@@ -161,7 +217,7 @@ export default async function handler(req, res) {
       total: empresas.length,
       municipioResolvido: { id: municipio.id, nome: municipio.nome },
       totalVarrido: brutos.length,
-      proximaPagina: paginaInicial + PAGINAS_PARALELAS,
+      proximaPagina: paginaInicial + MAX_PAGINAS,
       empresas,
       ...(empresas.length === 0 && brutos.length > 0
         ? {

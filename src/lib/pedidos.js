@@ -40,6 +40,10 @@ export async function criarPedido(pedido) {
     // pequeno em aberto, igual já fazemos com "arquivado" pro caso sem
     // representante.
     status: pedido.forcarPago ? "pago" : statusCalculado,
+    // Marca esse pedido como "cálculo ao vivo": total e saldo derivados dos
+    // itens/pagamentos. Pedidos antigos não têm essa marca e ficam congelados
+    // nos valores já gravados (ver valorDevidoDoPedido em constants.js).
+    calculoAoVivo: true,
     createdAt: serverTimestamp(),
   };
   delete payload.forcarPago;
@@ -100,7 +104,9 @@ export async function confirmarFormaPagamento(pedidoId, pedidoAtual, formaIndex,
   historico.push({ valor: Number(forma.valor), data: dataISO, formaPagamento: forma.tipo, conta: conta || null });
 
   const valorDevido = valorDevidoDoPedido(pedidoAtual);
-  const novoValorPago = valorPagoDoPedido({ ...pedidoAtual, formasPagamento: formas, pagamentos: historico });
+  const novoValorPago = pedidoAtual.calculoAoVivo
+    ? valorPagoDoPedido({ ...pedidoAtual, formasPagamento: formas, pagamentos: historico })
+    : (Number(pedidoAtual.valorPago) || 0) + Number(forma.valor);
   const novoStatus = novoValorPago >= valorDevido - 0.01 ? "pago" : "aberto";
 
   await updateDoc(doc(db, "pedidos", pedidoId), {
@@ -135,7 +141,9 @@ export async function registrarBaixa(pedidoId, pedidoAtual, baixa) {
     } : {}),
   });
 
-  const novoValorPago = valorPagoDoPedido({ ...pedidoAtual, pagamentos: historico });
+  const novoValorPago = pedidoAtual.calculoAoVivo
+    ? valorPagoDoPedido({ ...pedidoAtual, pagamentos: historico })
+    : (Number(pedidoAtual.valorPago) || 0) + Number(baixa.valor);
   const novoStatus = novoValorPago >= valorDevido - 0.01 ? "pago" : "aberto";
 
   await updateDoc(doc(db, "pedidos", pedidoId), {
@@ -152,9 +160,13 @@ export async function registrarBaixa(pedidoId, pedidoAtual, baixa) {
 // dos itens e pagamentos atuais — usado depois de qualquer edição/exclusão,
 // pra nunca deixar esses campos desatualizados.
 async function recalcularEGravar(pedidoId, pedidoAtualizado, camposExtras) {
-  const valorBruto = (pedidoAtualizado.itens || []).reduce((s, it) => s + (Number(it.valor) || 0), 0);
-  const valorDevido = calcularValorDevido(valorBruto, pedidoAtualizado.desconto);
-  const valorPago = valorPagoDoPedido(pedidoAtualizado);
+  // Editar/excluir algo é uma alteração deliberada — a partir daqui esse pedido
+  // passa a ter cálculo ao vivo (mesmo que fosse um pedido antigo congelado),
+  // porque agora os itens/pagamentos dele refletem a realidade conferida.
+  const aoVivo = { ...pedidoAtualizado, calculoAoVivo: true };
+  const valorBruto = (aoVivo.itens || []).reduce((s, it) => s + (Number(it.valor) || 0), 0);
+  const valorDevido = calcularValorDevido(valorBruto, aoVivo.desconto);
+  const valorPago = valorPagoDoPedido(aoVivo);
   const status = valorPago >= valorDevido - 0.01 ? "pago" : "aberto";
   await updateDoc(doc(db, "pedidos", pedidoId), {
     ...camposExtras,
@@ -162,8 +174,18 @@ async function recalcularEGravar(pedidoId, pedidoAtualizado, camposExtras) {
     valorDevido,
     valorPago,
     status,
+    calculoAoVivo: true,
   });
   return { valorBruto, valorDevido, valorPago, status };
+}
+
+// Marca pedidos como "conferidos": eles somem da lista de atrasados por 24h.
+export async function marcarConferido(pedidoIds) {
+  const ate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const batch = writeBatch(db);
+  pedidoIds.forEach((id) => batch.update(doc(db, "pedidos", id), { conferidoAte: ate }));
+  await batch.commit();
+  return ate;
 }
 
 // Edita valor e/ou data de um item (uma "compra" avulsa) dentro de um
