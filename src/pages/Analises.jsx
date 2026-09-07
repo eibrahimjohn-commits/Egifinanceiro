@@ -374,9 +374,10 @@ export default function Analises({ onAbrirNoVales }) {
               atrasados.map((p) => {
                 const situacao = situacaoEmAbertoDoPedido(p);
                 return (
-                  <div key={p.id} className="list-item" onClick={() => onAbrirNoVales?.(p)}
+                  <div key={p.id} className="list-item"
                     onDoubleClick={() => abrirClientePorId(p.clienteId, p.clienteNome)}
-                    style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                    style={{ flexDirection: "column", alignItems: "stretch", gap: 6, cursor: "default" }}
+                    title="Duplo clique para abrir o cadastro do cliente">
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                       <strong>{clientesPorId[p.clienteId]?.nome || p.clienteNome}</strong>
                       <span className="badge badge-atraso" style={{ flexShrink: 0 }}>Atrasado</span>
@@ -384,10 +385,16 @@ export default function Analises({ onAbrirNoVales }) {
                     <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
                       Em aberto desde {formatDate(situacao?.dataRef || p.data)} · {formatCurrency(saldoDoPedido(p))}
                     </div>
-                    <button className="btn btn-secondary" style={{ fontSize: 12, padding: "6px 10px", alignSelf: "flex-start" }}
-                      onClick={(e) => { e.stopPropagation(); handleConferido(p.id); }}>
-                      Conferido (some por 24h)
-                    </button>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button className="btn btn-secondary" style={{ fontSize: 12, padding: "6px 10px" }}
+                        onClick={() => handleConferido(p.id)}>
+                        Conferido (24h)
+                      </button>
+                      <button className="btn btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }}
+                        onClick={() => onAbrirNoVales?.(p)}>
+                        Ver no Vales →
+                      </button>
+                    </div>
                   </div>
                 );
               })

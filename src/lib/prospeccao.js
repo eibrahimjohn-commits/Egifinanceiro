@@ -123,3 +123,87 @@ export const STATUS_PROSPECCAO = [
   { value: "convertido", label: "Convertido em cliente", color: "var(--green)" },
   { value: "descartado", label: "Descartado", color: "var(--red)" },
 ];
+
+// ---------------------------------------------------------------------------
+// BUSCA DE LOJAS (Google Places) — caminho novo, focado em loja física real.
+// ---------------------------------------------------------------------------
+
+// Termos que funcionam bem pra achar o varejo que compra da EGI. Buscar por
+// termo livre pega lojas que a busca por CNAE perdia (muita loja de bijuteria
+// tem CNAE de "vestuário" ou "presentes" no papel).
+export const TERMOS_SUGERIDOS = [
+  "bijuteria",
+  "acessórios femininos",
+  "loja de presentes",
+  "armarinho",
+  "papelaria",
+  "perfumaria e cosméticos",
+  "loja de roupas femininas",
+  "salão de beleza",
+  "variedades e utilidades",
+];
+
+export async function buscarLojas({ termo, cidade, uf, pageToken = "" }) {
+  const params = new URLSearchParams();
+  params.append("termo", termo);
+  params.append("cidade", cidade);
+  if (uf) params.append("uf", uf);
+  if (pageToken) params.append("pageToken", pageToken);
+
+  const resp = await fetch(`/api/buscar-lojas?${params.toString()}`);
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data?.erro || `Falha na busca (${resp.status}).`);
+
+  return {
+    lojas: data.lojas || [],
+    proximoPageToken: data.proximoPageToken || null,
+    consulta: data.consulta,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// DESCARTADOS — lojas que você já avaliou e não interessam.
+//
+// Guardamos o identificador do Google (placeId) numa coleção separada. Toda
+// busca seguinte filtra por essa lista, então uma loja descartada nunca mais
+// aparece — mesmo que você repita a mesma busca daqui a meses. É isso que
+// evita ficar revendo os mesmos nomes a cada rodada de prospecção.
+// ---------------------------------------------------------------------------
+
+const descartadosRef = collection(db, "prospeccoesDescartadas");
+
+export async function listarDescartados() {
+  const snap = await getDocs(descartadosRef);
+  const ids = new Set();
+  snap.docs.forEach((d) => {
+    const dados = d.data();
+    if (dados.placeId) ids.add(dados.placeId);
+  });
+  return ids;
+}
+
+export async function descartarLoja(loja, motivo = "") {
+  await addDoc(descartadosRef, {
+    placeId: loja.placeId,
+    nome: loja.nome || "",
+    endereco: loja.endereco || "",
+    motivo,
+    descartadoEm: new Date().toISOString(),
+    createdAt: serverTimestamp(),
+  });
+}
+
+// Procura o CNPJ de uma loja do Maps cruzando nome + endereço. Devolve
+// CANDIDATOS com nota de confiança — a confirmação é sempre humana.
+export async function procurarCnpjDaLoja({ nome, endereco, cidade, uf }) {
+  const params = new URLSearchParams();
+  params.append("nome", nome);
+  if (endereco) params.append("endereco", endereco);
+  params.append("cidade", cidade);
+  if (uf) params.append("uf", uf);
+
+  const resp = await fetch(`/api/casar-cnpj?${params.toString()}`);
+  const data = await resp.json();
+  if (!resp.ok) throw new Error((data?.erro || "Falha na busca.") + (data?.dica ? " " + data.dica : ""));
+  return data.candidatos || [];
+}

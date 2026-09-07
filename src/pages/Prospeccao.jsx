@@ -8,12 +8,28 @@ import {
   completarComBrasilApi,
   CNAES_SUGERIDOS,
   STATUS_PROSPECCAO,
+  TERMOS_SUGERIDOS,
+  buscarLojas,
+  listarDescartados,
+  descartarLoja,
+  procurarCnpjDaLoja,
 } from "../lib/prospeccao";
-import { listarClientes, salvarCliente } from "../lib/clientes";
+import { listarClientes, salvarCliente, consultarCnpj } from "../lib/clientes";
 import { ESTADOS_BR, formatCurrency } from "../lib/constants";
 
 export default function Prospeccao() {
-  const [aba, setAba] = useState("buscar"); // buscar | salvos
+  const [aba, setAba] = useState("lojas"); // lojas | buscar | salvos
+
+  // --- Busca de lojas pelo Google Maps ---
+  const [termoLoja, setTermoLoja] = useState(TERMOS_SUGERIDOS[0]);
+  const [cidadeLoja, setCidadeLoja] = useState("");
+  const [ufLoja, setUfLoja] = useState("");
+  const [lojas, setLojas] = useState(null);
+  const [buscandoLojas, setBuscandoLojas] = useState(false);
+  const [erroLojas, setErroLojas] = useState("");
+  const [tokenLojas, setTokenLojas] = useState(null);
+  const [descartados, setDescartados] = useState(new Set());
+  const [dadosCnpj, setDadosCnpj] = useState({}); // placeId -> { estado, candidatos, escolhido }
 
   const [cidadeNome, setCidadeNome] = useState("");
   const [uf, setUf] = useState("");
@@ -36,6 +52,63 @@ export default function Prospeccao() {
   const [carregandoSalvos, setCarregandoSalvos] = useState(true);
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [toast, setToast] = useState("");
+
+  useEffect(() => { listarDescartados().then(setDescartados).catch(() => {}); }, []);
+
+  async function handleBuscarLojas(continuar = false) {
+    if (!cidadeLoja.trim()) { setErroLojas("Informe a cidade."); return; }
+    setBuscandoLojas(true);
+    setErroLojas("");
+    try {
+      const r = await buscarLojas({
+        termo: termoLoja, cidade: cidadeLoja, uf: ufLoja,
+        pageToken: continuar ? tokenLojas : "",
+      });
+      // Filtra as que você já descartou antes — o ponto do descarte é
+      // justamente não revisitar o que já foi avaliado.
+      const novas = r.lojas.filter((l) => !descartados.has(l.placeId));
+      setLojas((atual) => (continuar && atual ? [...atual, ...novas] : novas));
+      setTokenLojas(r.proximoPageToken);
+    } catch (err) {
+      setErroLojas(err.message);
+    } finally {
+      setBuscandoLojas(false);
+    }
+  }
+
+  async function handleProcurarCnpj(loja) {
+    setDadosCnpj((a) => ({ ...a, [loja.placeId]: { estado: "buscando" } }));
+    try {
+      const candidatos = await procurarCnpjDaLoja({
+        nome: loja.nome, endereco: loja.endereco, cidade: cidadeLoja, uf: ufLoja,
+      });
+      setDadosCnpj((a) => ({
+        ...a,
+        [loja.placeId]: candidatos.length ? { estado: "escolher", candidatos } : { estado: "vazio" },
+      }));
+    } catch (err) {
+      setDadosCnpj((a) => ({ ...a, [loja.placeId]: { estado: "erro", mensagem: err.message } }));
+    }
+  }
+
+  // Depois que a pessoa confirma qual CNPJ é, aí sim buscamos os dados
+  // completos (capital social, situação, porte...) na base pública — essa
+  // parte é confiável, porque a partir do CNPJ não há ambiguidade.
+  async function handleConfirmarCnpj(loja, cnpj) {
+    setDadosCnpj((a) => ({ ...a, [loja.placeId]: { estado: "buscando" } }));
+    try {
+      const dados = await consultarCnpj(cnpj);
+      setDadosCnpj((a) => ({ ...a, [loja.placeId]: { estado: "pronto", cnpj, dados } }));
+    } catch (err) {
+      setDadosCnpj((a) => ({ ...a, [loja.placeId]: { estado: "erro", mensagem: err.message } }));
+    }
+  }
+
+  async function handleDescartar(loja) {
+    await descartarLoja(loja);
+    setDescartados((atual) => new Set(atual).add(loja.placeId));
+    setLojas((atual) => (atual || []).filter((l) => l.placeId !== loja.placeId));
+  }
 
   function mostrarToast(msg) {
     setToast(msg);
@@ -148,15 +221,143 @@ export default function Prospeccao() {
       {toast && <div className="toast">{toast}</div>}
 
       <div className="card" style={{ padding: 8, display: "flex", gap: 8 }}>
+        <button className={"btn " + (aba === "lojas" ? "btn-primary" : "btn-ghost")}
+          style={{ flex: 1 }} onClick={() => setAba("lojas")}>
+          Buscar lojas (Maps)
+        </button>
         <button className={"btn " + (aba === "buscar" ? "btn-primary" : "btn-ghost")}
           style={{ flex: 1 }} onClick={() => setAba("buscar")}>
-          Buscar empresas
+          Por CNAE
         </button>
         <button className={"btn " + (aba === "salvos" ? "btn-primary" : "btn-ghost")}
           style={{ flex: 1 }} onClick={() => setAba("salvos")}>
           Prospecções salvas ({prospeccoes.length})
         </button>
       </div>
+
+      {aba === "lojas" && (
+        <>
+          <div className="card">
+            <h2 className="card-title">Buscar lojas no Google Maps</h2>
+            <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+              Traz lojas que existem de fato, com telefone e endereço. Diferente da busca por
+              CNAE, aqui não depende do lojista ter registrado a atividade "certa" na Receita.
+            </p>
+            <div className="row">
+              <div className="field">
+                <label>O que buscar</label>
+                <input className="input" list="termos-sugeridos" value={termoLoja}
+                  onChange={(e) => setTermoLoja(e.target.value)} placeholder="Ex: bijuteria" />
+                <datalist id="termos-sugeridos">
+                  {TERMOS_SUGERIDOS.map((t) => <option key={t} value={t} />)}
+                </datalist>
+              </div>
+              <div className="field">
+                <label>Cidade</label>
+                <input className="input" value={cidadeLoja}
+                  onChange={(e) => setCidadeLoja(e.target.value)} placeholder="Ex: Porto Alegre" />
+              </div>
+              <div className="field" style={{ flex: "0 0 110px" }}>
+                <label>Estado</label>
+                <select className="input" value={ufLoja} onChange={(e) => setUfLoja(e.target.value)}>
+                  <option value="">--</option>
+                  {ESTADOS_BR.map((e) => <option key={e} value={e}>{e}</option>)}
+                </select>
+              </div>
+            </div>
+            <button className="btn btn-primary btn-block" onClick={() => handleBuscarLojas(false)} disabled={buscandoLojas}>
+              {buscandoLojas ? "Buscando..." : "Buscar"}
+            </button>
+            {descartados.size > 0 && (
+              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 8 }}>
+                {descartados.size} loja(s) já descartada(s) — elas não voltam a aparecer nas buscas.
+              </div>
+            )}
+          </div>
+
+          {erroLojas && <div className="card" style={{ color: "var(--red)", fontSize: 14 }}>{erroLojas}</div>}
+
+          {lojas && lojas.length === 0 && !buscandoLojas && (
+            <div className="empty-state">Nenhuma loja nova encontrada. Tente outro termo ou outra cidade.</div>
+          )}
+
+          {lojas && lojas.length > 0 && (
+            <>
+              <div className="lista-grid">
+                {lojas.map((l) => (
+                  <div key={l.placeId} className="card" style={{ padding: 14 }}>
+                    <strong>{l.nome}</strong>
+                    {l.categoria && <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>{l.categoria}</div>}
+                    <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 6 }}>{l.endereco}</div>
+                    {l.telefone && <div style={{ fontSize: 13, marginTop: 4 }}>📞 {l.telefone}</div>}
+                    <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+                      {l.telefone && (
+                        <a className="btn btn-secondary" style={{ fontSize: 12, padding: "6px 10px" }}
+                          href={`https://wa.me/55${l.telefone.replace(/\D/g, "")}`}
+                          target="_blank" rel="noopener noreferrer">WhatsApp</a>
+                      )}
+                      {l.site && (
+                        <a className="btn btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }}
+                          href={l.site} target="_blank" rel="noopener noreferrer">Site</a>
+                      )}
+                      <button className="btn btn-ghost" style={{ fontSize: 12, padding: "6px 10px", color: "var(--red)" }}
+                        onClick={() => handleDescartar(l)}>Descartar</button>
+                    </div>
+
+                    {(() => {
+                      const info = dadosCnpj[l.placeId];
+                      if (!info) return (
+                        <button className="btn btn-ghost" style={{ fontSize: 12, padding: "6px 10px", marginTop: 6 }}
+                          onClick={() => handleProcurarCnpj(l)}>Procurar CNPJ</button>
+                      );
+                      if (info.estado === "buscando") return <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 8 }}>Procurando...</div>;
+                      if (info.estado === "vazio") return <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 8 }}>Nenhum CNPJ parecido encontrado nessa cidade.</div>;
+                      if (info.estado === "erro") return <div style={{ fontSize: 12, color: "var(--red)", marginTop: 8 }}>{info.mensagem}</div>;
+                      if (info.estado === "escolher") return (
+                        <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+                          <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>
+                            Possíveis CNPJs — confirme qual é o correto:
+                          </div>
+                          {info.candidatos.map((c) => (
+                            <div key={c.cnpj} style={{ fontSize: 12, marginBottom: 6 }}>
+                              <div><strong>{c.razaoSocial || "(sem nome)"}</strong> · {c.nota}% de semelhança</div>
+                              <div style={{ color: "var(--ink-soft)" }}>{c.logradouro} {c.bairro && "· " + c.bairro}</div>
+                              <button className="btn btn-secondary" style={{ fontSize: 11, padding: "4px 8px", marginTop: 3 }}
+                                onClick={() => handleConfirmarCnpj(l, c.cnpj)}>É esse ({c.cnpj})</button>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                      if (info.estado === "pronto") return (
+                        <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 8, fontSize: 12, lineHeight: 1.7 }}>
+                          <div>CNPJ: <strong>{info.cnpj}</strong></div>
+                          <div>Razão social: <strong>{info.dados.razaoSocial}</strong></div>
+                          {info.dados.infoExtra?.situacaoCadastral && <div>Situação: <strong>{info.dados.infoExtra.situacaoCadastral}</strong></div>}
+                          {info.dados.infoExtra?.capitalSocial != null && <div>Capital social: <strong>{formatCurrency(info.dados.infoExtra.capitalSocial)}</strong></div>}
+                          {info.dados.infoExtra?.porte && <div>Porte: <strong>{info.dados.infoExtra.porte}</strong></div>}
+                          {info.dados.infoExtra?.atividadePrincipal && <div>Atividade: {info.dados.infoExtra.atividadePrincipal}</div>}
+                        </div>
+                      );
+                      return null;
+                    })()}
+                  </div>
+                ))}
+              </div>
+              {tokenLojas && (
+                <button className="btn btn-secondary btn-block" style={{ marginTop: 12 }}
+                  onClick={() => handleBuscarLojas(true)} disabled={buscandoLojas}>
+                  {buscandoLojas ? "Buscando..." : "Buscar mais resultados"}
+                </button>
+              )}
+              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 10 }}>
+                O Google devolve no máximo 60 resultados por termo. Para ampliar a cobertura,
+                repita a busca variando o termo (ex: "bijuteria", depois "acessórios femininos",
+                depois "loja de presentes") ou busque por bairro.
+              </div>
+            </>
+          )}
+        </>
+      )}
 
       {aba === "buscar" && (
         <>
@@ -220,7 +421,7 @@ export default function Prospeccao() {
                 {municipioResolvido && (
                   <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 8 }}>
                     Buscando em: <strong>{municipioResolvido.nome}</strong> · verificamos {totalVarrido} empresas da cidade, {resultados.length} bateram com o ramo escolhido
-                    {totalVarrido >= 600 && " (pode haver mais — a cidade tem muitas empresas cadastradas)"}
+                    {totalVarrido >= 800 && " — cidades grandes têm dezenas de milhares de empresas cadastradas, então use \"Buscar mais\" algumas vezes para aumentar a cobertura"}
                   </div>
                 )}
 
@@ -276,7 +477,7 @@ export default function Prospeccao() {
                 })}
                 </div>
                 <button className="btn btn-secondary btn-block" onClick={handleBuscarMais} disabled={buscandoMais} style={{ marginTop: 12 }}>
-                  {buscandoMais ? "Buscando mais..." : `Buscar mais 600 (verificadas até agora: ${totalVarrido})`}
+                  {buscandoMais ? "Buscando mais..." : `Buscar mais 800 (verificadas até agora: ${totalVarrido})`}
                 </button>
               </>
             )

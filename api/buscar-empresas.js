@@ -93,8 +93,8 @@ export default async function handler(req, res) {
   // chamadas simultâneas pesadas são um jeito clássico de derrubar uma API de
   // terceiro — e o erro que aparecia era justamente HTTP 500 (erro interno do
   // lado deles), não 401/403 de credencial.
-  const MAX_PAGINAS = 3;
-  const PER_PAGE = 50;
+  const MAX_PAGINAS = 8;
+  const PER_PAGE = 100;
   const TIMEOUT_MS = 12000;
   const TENTATIVAS_POR_PAGINA = 3;
 
@@ -167,6 +167,72 @@ export default async function handler(req, res) {
     return item.main_cnae && String(item.main_cnae).replace(/\D/g, "") === alvoDigitos;
   }
 
+  // ------------------------------------------------------------------
+  // PROVEDOR ALTERNATIVO (recomendado): API que filtra por CNAE no servidor.
+  //
+  // A Base Empresarial NÃO filtra por CNAE — ela só devolve "todas as empresas
+  // da cidade", e o filtro de ramo é feito aqui no nosso código. Isso é o
+  // problema de fundo: Porto Alegre tem mais de 200 mil empresas; varrer 800
+  // por chamada e torcer pra alguma ser bijuteria é procurar agulha no palheiro.
+  //
+  // Com CNPJ_WS_TOKEN configurado nas variáveis de ambiente da Vercel, usamos
+  // o CNPJ.ws, que aceita filtro de atividade + cidade direto na consulta —
+  // então o que volta JÁ é só o ramo procurado.
+  //
+  // OBS: o formato exato do endpoint comercial precisa ser confirmado com a
+  // documentação da conta (o filtro por CNAE é exclusivo do plano Premium).
+  // Se a resposta vier diferente do esperado, o erro abaixo mostra o corpo
+  // cru pra facilitar o ajuste.
+  const tokenCnpjWs = process.env.CNPJ_WS_TOKEN;
+  if (tokenCnpjWs && cnae) {
+    try {
+      const params = new URLSearchParams();
+      params.append("token", tokenCnpjWs);
+      params.append("atividade_principal", String(cnae).replace(/\D/g, ""));
+      params.append("cidade_id", String(municipio.id));
+      params.append("situacao_cadastral", "Ativa");
+      params.append("limit", "50");
+      const url = `https://comercial.cnpj.ws/estabelecimentos?${params.toString()}`;
+
+      const r = await fetch(url, { headers: { Accept: "application/json" } });
+      const texto = await r.text();
+      const json = texto ? JSON.parse(texto) : {};
+      if (!r.ok) {
+        return res.status(502).json({
+          erro: `O CNPJ.ws recusou a consulta (HTTP ${r.status}). Confira se o token está correto e se o plano inclui busca por CNAE.`,
+          detalhe: json,
+        });
+      }
+      const lista = extrairLista(json);
+      const empresas = lista.map((e) => ({
+        cnpj: String(e.cnpj || "").replace(/\D/g, ""),
+        razaoSocial: e.razao_social || e.nome_fantasia || "",
+        nomeFantasia: e.nome_fantasia || "",
+        cidade: e.cidade?.nome || municipio.nome,
+        estado: e.estado?.sigla || uf || "",
+        bairro: e.bairro || "",
+        logradouro: [e.tipo_logradouro, e.logradouro, e.numero].filter(Boolean).join(" "),
+        telefone: [e.ddd1, e.telefone1].filter(Boolean).join(" "),
+        email: e.email || "",
+        situacaoCadastral: e.situacao_cadastral || "",
+        dataAbertura: e.data_inicio_atividade || "",
+        cnae: cnae,
+      })).filter((e) => e.cnpj);
+
+      return res.status(200).json({
+        total: empresas.length,
+        provedor: "cnpj.ws",
+        municipioResolvido: { id: municipio.id, nome: municipio.nome },
+        totalVarrido: empresas.length,
+        empresas,
+      });
+    } catch (e) {
+      return res.status(502).json({
+        erro: "Falha ao consultar o CNPJ.ws: " + String(e.message || e),
+      });
+    }
+  }
+
   try {
     let brutos = [];
     let primeiraFalha = null;
@@ -218,6 +284,7 @@ export default async function handler(req, res) {
       municipioResolvido: { id: municipio.id, nome: municipio.nome },
       totalVarrido: brutos.length,
       proximaPagina: paginaInicial + MAX_PAGINAS,
+      varreduraPorChamada: MAX_PAGINAS * PER_PAGE,
       empresas,
       ...(empresas.length === 0 && brutos.length > 0
         ? {
