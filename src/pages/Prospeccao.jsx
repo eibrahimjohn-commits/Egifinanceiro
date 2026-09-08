@@ -29,7 +29,8 @@ export default function Prospeccao() {
   const [erroLojas, setErroLojas] = useState("");
   const [tokenLojas, setTokenLojas] = useState(null);
   const [descartados, setDescartados] = useState(new Set());
-  const [dadosCnpj, setDadosCnpj] = useState({}); // placeId -> { estado, candidatos, escolhido }
+  const [dadosCnpj, setDadosCnpj] = useState({});
+  const [salvos, setSalvos] = useState(new Set()); // placeIds já salvos pra contato // placeId -> { estado, candidatos, escolhido }
 
   const [cidadeNome, setCidadeNome] = useState("");
   const [uf, setUf] = useState("");
@@ -102,6 +103,24 @@ export default function Prospeccao() {
     } catch (err) {
       setDadosCnpj((a) => ({ ...a, [loja.placeId]: { estado: "erro", mensagem: err.message } }));
     }
+  }
+
+  // Salva a loja na lista de prospecções pra retomar o contato depois.
+  // O CNPJ é opcional aqui: se já foi cruzado, vai junto; se não, salva com o
+  // que temos do Maps (nome, telefone, endereço) — que já basta pra ligar.
+  async function handleSalvarLoja(loja) {
+    const info = dadosCnpj[loja.placeId];
+    await salvarProspeccao({
+      cnpj: info?.cnpj || "",
+      razaoSocial: info?.dados?.razaoSocial || loja.nome,
+      nomeFantasia: loja.nome,
+      cidade: cidadeLoja,
+      estado: ufLoja,
+      cnae: info?.dados?.infoExtra?.atividadePrincipal || "",
+      telefone: loja.telefone || "",
+    });
+    setSalvos((a) => new Set(a).add(loja.placeId));
+    mostrarToast("Salvo em Prospecções — retome o contato quando quiser.");
   }
 
   async function handleDescartar(loja) {
@@ -300,6 +319,12 @@ export default function Prospeccao() {
                         <a className="btn btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }}
                           href={l.site} target="_blank" rel="noopener noreferrer">Site</a>
                       )}
+                      {salvos.has(l.placeId) ? (
+                        <span className="badge badge-pago" style={{ fontSize: 11 }}>Salvo ✓</span>
+                      ) : (
+                        <button className="btn btn-primary" style={{ fontSize: 12, padding: "6px 10px" }}
+                          onClick={() => handleSalvarLoja(l)}>Salvar p/ contato</button>
+                      )}
                       <button className="btn btn-ghost" style={{ fontSize: 12, padding: "6px 10px", color: "var(--red)" }}
                         onClick={() => handleDescartar(l)}>Descartar</button>
                     </div>
@@ -311,8 +336,21 @@ export default function Prospeccao() {
                           onClick={() => handleProcurarCnpj(l)}>Procurar CNPJ</button>
                       );
                       if (info.estado === "buscando") return <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 8 }}>Procurando...</div>;
-                      if (info.estado === "vazio") return <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 8 }}>Nenhum CNPJ parecido encontrado nessa cidade.</div>;
-                      if (info.estado === "erro") return <div style={{ fontSize: 12, color: "var(--red)", marginTop: 8 }}>{info.mensagem}</div>;
+                      if (info.estado === "vazio" || info.estado === "erro") return (
+                        <div style={{ marginTop: 8, fontSize: 12 }}>
+                          <div style={{ color: info.estado === "erro" ? "var(--red)" : "var(--ink-soft)" }}>
+                            {info.estado === "erro" ? info.mensagem : "Nenhum CNPJ parecido encontrado nessa cidade."}
+                          </div>
+                          <a className="btn btn-ghost" style={{ fontSize: 11, padding: "4px 8px", marginTop: 4 }}
+                            href={`https://www.google.com/search?q=${encodeURIComponent(`"${l.nome}" ${cidadeLoja} CNPJ`)}`}
+                            target="_blank" rel="noopener noreferrer">
+                            Procurar no Google
+                          </a>
+                          <div style={{ color: "var(--ink-soft)", marginTop: 4 }}>
+                            Achando o CNPJ, cole no cadastro do cliente e o resto (capital, situação, porte) é preenchido sozinho.
+                          </div>
+                        </div>
+                      );
                       if (info.estado === "escolher") return (
                         <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
                           <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>

@@ -75,7 +75,7 @@ function agruparPorCliente(lista, clientesPorId = {}) {
     g.totalDevido += valorDevidoDoPedido(p);
     g.totalPago += valorPagoDoPedido(p);
     if (new Date(p.data) > new Date(g.dataMaisRecente)) g.dataMaisRecente = p.data;
-    if (pedidoEstaAtrasado(p)) g.atrasado = true;
+    if (pedidoEstaAtrasado(p, clientesPorId[p.clienteId])) g.atrasado = true;
   });
   return Array.from(grupos.values()).map((g) => {
     const saldo = g.totalDevido - g.totalPago;

@@ -91,19 +91,30 @@ export function formatDate(dateStr) {
 const DIAS_TOLERANCIA_A_VISTA = 7;
 const MARGEM_PERCENTUAL_CHECKPOINT = 10;
 
-function checkpointsDoPrazo(prazoDias) {
-  if (!prazoDias || prazoDias <= 0) {
+function checkpointsDoPrazo(prazoDias, prazoModelo) {
+  // Se o cliente tem um modelo de prazo escolhido, usamos os pontos de
+  // cobrança dele. Isso é o que permite prazos como "Entrada + 30 e 60",
+  // que não dá pra descrever só com um número de dias.
+  const opcao = prazoModelo ? OPCOES_PRAZO.find((o) => o.id === prazoModelo) : null;
+  if (opcao) {
+    return opcao.checkpoints.map(([dias, percentualMinimo]) => ({ dias, percentualMinimo }));
+  }
+
+  // Sem modelo definido, caímos no comportamento por número de dias. Prazo
+  // ausente ou zero conta como "à vista": 1 semana de tolerância. Como o prazo
+  // é lido do cadastro ATUAL do cliente, basta preencher lá depois que os
+  // pedidos antigos dele passam a ser avaliados pelo prazo correto.
+  const dias = Number(prazoDias);
+  if (!dias || dias <= 0) {
     return [{ dias: DIAS_TOLERANCIA_A_VISTA, percentualMinimo: 100 }];
   }
-  const numPassos = Math.max(1, Math.round(prazoDias / 30));
+  const numPassos = Math.max(1, Math.round(dias / 30));
   const checkpoints = [];
   for (let i = 1; i <= numPassos; i++) {
-    const dias = (prazoDias / numPassos) * i;
-    const idealPercentual = (i / numPassos) * 100;
     const ehUltimo = i === numPassos;
     checkpoints.push({
-      dias,
-      percentualMinimo: ehUltimo ? 100 : Math.max(0, idealPercentual - MARGEM_PERCENTUAL_CHECKPOINT),
+      dias: (dias / numPassos) * i,
+      percentualMinimo: ehUltimo ? 100 : Math.max(0, (i / numPassos) * 100 - MARGEM_PERCENTUAL_CHECKPOINT),
     });
   }
   return checkpoints;
@@ -157,15 +168,21 @@ export function situacaoEmAbertoDoPedido(pedido) {
   return { dataRef: itens[idxPrimeiroAberto].data, percentualPago, totalRestante };
 }
 
-export function pedidoEstaAtrasado(pedido) {
+// `clienteAtual` é opcional: quando informado, o prazo vem do cadastro de hoje
+// em vez da cópia congelada no pedido. Assim, preencher o prazo de um cliente
+// passa a valer também pros pedidos antigos dele, sem precisar reeditar cada um.
+export function pedidoEstaAtrasado(pedido, clienteAtual) {
   if (pedido.arquivado) return false;
   if (estaConferido(pedido)) return false;
 
   const situacao = situacaoEmAbertoDoPedido(pedido);
   if (!situacao || !situacao.dataRef) return false;
 
+  const prazoBruto = clienteAtual?.prazo ?? pedido.clientePrazo;
+  const modelo = clienteAtual?.prazoModelo ?? pedido.clientePrazoModelo;
+  const checkpoints = checkpointsDoPrazo(prazoBruto, modelo);
+
   const diasPassados = (Date.now() - new Date(situacao.dataRef + "T00:00:00").getTime()) / 86400000;
-  const checkpoints = checkpointsDoPrazo(Number(pedido.clientePrazo));
   return checkpoints.some((cp) => diasPassados >= cp.dias && situacao.percentualPago + 0.01 < cp.percentualMinimo);
 }
 
@@ -186,12 +203,37 @@ export function calcularValorDevido(valorBruto, descontoTexto) {
 // Opções fixas de prazo — o valor salvo continua sendo um número de dias
 // (o "prazo final" da condição), pra não quebrar nada que já lê esse campo
 // (atraso, previsão de recebimento em 30 dias etc.)
+// Cada modelo de prazo define seus próprios pontos de cobrança:
+// [dias após a compra, % mínimo que já deveria ter sido pago].
+// O último ponto sempre exige 100%. Nos intermediários deixamos ~10 pontos
+// percentuais de folga sobre o ideal, pra dar margem de erro (ex: no "30 e 60",
+// no dia 30 o ideal seria 50% pago, mas só cobramos a partir de 40%).
+// "Entrada" é tratada como uma parcela que vence em 7 dias.
 export const OPCOES_PRAZO = [
-  { label: "À vista", dias: 0 },
-  { label: "30 dias", dias: 30 },
-  { label: "30 e 60 dias", dias: 60 },
-  { label: "30, 60 e 90 dias", dias: 90 },
+  { id: "avista", label: "À vista", dias: 0, checkpoints: [[7, 100]] },
+  { id: "30", label: "30 dias", dias: 30, checkpoints: [[30, 100]] },
+  { id: "entrada30", label: "Entrada + 30 dias", dias: 30, checkpoints: [[7, 40], [30, 100]] },
+  { id: "30-60", label: "30 e 60 dias", dias: 60, checkpoints: [[30, 40], [60, 100]] },
+  { id: "entrada30-60", label: "Entrada + 30 e 60 dias", dias: 60, checkpoints: [[7, 23], [30, 57], [60, 100]] },
+  { id: "30-45-60", label: "30, 45 e 60 dias", dias: 60, checkpoints: [[30, 23], [45, 57], [60, 100]] },
+  { id: "30-60-90", label: "30, 60 e 90 dias", dias: 90, checkpoints: [[30, 23], [60, 57], [90, 100]] },
 ];
+
+export function opcaoPrazoPorId(id) {
+  return OPCOES_PRAZO.find((o) => o.id === id) || null;
+}
+
+// Descobre qual opção do dropdown corresponde ao que está gravado. Prioriza o
+// modelo salvo (prazoModelo); sem ele (cadastro antigo, de antes desse campo
+// existir), tenta achar pelo número de dias — pegando a opção "simples"
+// (sem entrada) quando há mais de uma com o mesmo prazo final, pra não supor
+// "Entrada" em dados antigos que nunca tiveram esse conceito.
+export function idPrazoAtual(prazoModelo, prazoDias) {
+  if (prazoModelo && OPCOES_PRAZO.some((o) => o.id === prazoModelo)) return prazoModelo;
+  if (prazoDias === undefined || prazoDias === null || prazoDias === "") return "";
+  const opcao = OPCOES_PRAZO.find((o) => o.dias === Number(prazoDias));
+  return opcao ? opcao.id : "";
+}
 
 // O desconto sempre foi guardado como um texto livre (ex: "5% à vista" ou
 // "5% fixo"), pra não quebrar o parser que já existe (parseDescontoPercent).

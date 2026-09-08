@@ -14,8 +14,8 @@ export default function App() {
   const [tab, setTab] = useState("pedidos");
   const [alvoVales, setAlvoVales] = useState(null); // pedido atrasado clicado nas Análises
 
-  const WIDE_TABS = ["pedidos", "vales", "analises", "base", "prospeccao", "historico"];
-  const FULL_TABS = ["pedidos", "vales", "analises", "base", "prospeccao", "historico"];
+  const WIDE_TABS = ["pedidos", "vales", "pagamentos", "analises", "base", "prospeccao", "historico"];
+  const FULL_TABS = ["pedidos", "vales", "pagamentos", "analises", "base", "prospeccao", "historico"];
 
   if (!autenticado) {
     return <LoginGate onEntrar={() => setAutenticado(true)} />;

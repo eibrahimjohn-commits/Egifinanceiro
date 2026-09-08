@@ -251,3 +251,9 @@
   font-size: 14px !important;
   padding: 11px 16px !important;
 }
+
+/* Pagamentos: o formulário fica com largura confortável mesmo na tela cheia,
+   mas o histórico abaixo aproveita o espaço todo em colunas. */
+.pagamentos-layout > form.card {
+  max-width: 640px;
+}

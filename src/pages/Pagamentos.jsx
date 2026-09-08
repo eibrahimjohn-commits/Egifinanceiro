@@ -40,7 +40,7 @@ export default function Pagamentos() {
   }
 
   return (
-    <div>
+    <div className="pagamentos-layout">
       {toast && <div className="toast">{toast}</div>}
 
       <form className="card" onSubmit={handleSalvar}>
@@ -82,17 +82,19 @@ export default function Pagamentos() {
       ) : lista.length === 0 ? (
         <div className="empty-state">Nenhum pagamento registrado ainda.</div>
       ) : (
-        lista.map((p) => (
-          <div key={p.id} className="list-item">
-            <div>
-              <strong>{p.destino}</strong>
-              <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                {formatDate(p.data)}{p.formaPagamento ? ` · ${p.formaPagamento}` : ""}
+        <div className="lista-grid">
+          {lista.map((p) => (
+            <div key={p.id} className="list-item">
+              <div>
+                <strong>{p.destino}</strong>
+                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                  {formatDate(p.data)}{p.formaPagamento ? ` · ${p.formaPagamento}` : ""}
+                </div>
               </div>
+              <span style={{ fontWeight: 700 }}>{formatCurrency(p.valor)}</span>
             </div>
-            <span style={{ fontWeight: 700 }}>{formatCurrency(p.valor)}</span>
-          </div>
-        ))
+          ))}
+        </div>
       )}
     </div>
   );

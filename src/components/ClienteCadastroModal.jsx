@@ -5,7 +5,7 @@ import {
 import { listarPedidos } from "../lib/pedidos";
 import {
   ESTADOS_BR, formatCurrency, formatDate,
-  OPCOES_PRAZO, parseDescontoCampos, montarDescontoTexto,
+  OPCOES_PRAZO, idPrazoAtual, parseDescontoCampos, montarDescontoTexto,
 } from "../lib/constants";
 import "./ClienteCadastroModal.css";
 
@@ -203,13 +203,15 @@ export default function ClienteCadastroModal({
               </div>
               <div className="field">
                 <label>Prazo de pagamento</label>
-                <select className="input" value={editando.prazo ?? ""}
-                  onChange={(e) => setEditando({ ...editando, prazo: Number(e.target.value) })}>
+                <select className="input" value={idPrazoAtual(editando.prazoModelo, editando.prazo)}
+                  onChange={(e) => {
+                    const opcao = OPCOES_PRAZO.find((o) => o.id === e.target.value);
+                    setEditando({ ...editando, prazoModelo: opcao?.id || "", prazo: opcao?.dias ?? "" });
+                  }}>
                   <option value="" disabled>Selecione...</option>
-                  {OPCOES_PRAZO.map((o) => <option key={o.dias} value={o.dias}>{o.label}</option>)}
-                  {editando.prazo !== undefined && editando.prazo !== null && editando.prazo !== "" &&
-                    !OPCOES_PRAZO.some((o) => o.dias === Number(editando.prazo)) && (
-                      <option value={editando.prazo}>{editando.prazo} dias (personalizado)</option>
+                  {OPCOES_PRAZO.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  {!idPrazoAtual(editando.prazoModelo, editando.prazo) && editando.prazo !== undefined && editando.prazo !== null && editando.prazo !== "" && (
+                    <option value="">{editando.prazo} dias (personalizado — escolha um modelo acima)</option>
                   )}
                 </select>
               </div>

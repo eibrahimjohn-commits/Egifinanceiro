@@ -100,7 +100,12 @@ export default function Analises({ onAbrirNoVales }) {
   const hoje = new Date();
 
   // Clientes com pagamento atrasado (parcela de cheque com data já vencida)
-  const atrasados = pedidos.filter(pedidoEstaAtrasado);
+  // Mapa do cadastro atual por id — usado tanto pra exibir nome/cidade corretos
+  // quanto pra saber o prazo de pagamento vigente de cada cliente.
+  const clientesPorId = {};
+  clientes.forEach((c) => { clientesPorId[c.id] = c; });
+
+  const atrasados = pedidos.filter((p) => pedidoEstaAtrasado(p, clientesPorId[p.clienteId]));
 
   // Clientes inativos: última compra há mais de 60 dias, sem vale em aberto
   const ultimaCompraPorCliente = {};
@@ -204,8 +209,6 @@ export default function Analises({ onAbrirNoVales }) {
 
   // Mapa pra resolver o cadastro completo do cliente a partir de um pedido
   // (o pedido só guarda uma cópia do nome/id no momento da venda).
-  const clientesPorId = {};
-  clientes.forEach((c) => { clientesPorId[c.id] = c; });
 
   function mostrarToastGenerico(msg) {
     setToast(msg);

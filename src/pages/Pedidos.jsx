@@ -13,6 +13,7 @@ import {
   calcularValorDevido,
   podeIrDireitoParaRecebidos,
   OPCOES_PRAZO,
+  idPrazoAtual,
   parseDescontoCampos,
   montarDescontoTexto,
   descontoAplicavelAoPedido,
@@ -27,6 +28,7 @@ const CLIENTE_VAZIO = {
   representante: "",
   descontoPadrao: "",
   prazo: "",
+  prazoModelo: "",
   cidade: "",
   estado: "",
   grupo: "",
@@ -117,6 +119,7 @@ export default function Pedidos() {
       representante: c.representante || "",
       descontoPadrao: c.descontoPadrao || "",
       prazo: c.prazo ?? "",
+      prazoModelo: c.prazoModelo || "",
       cidade: c.cidade || "",
       estado: c.estado || "",
       grupo: c.grupo || "",
@@ -335,6 +338,7 @@ export default function Pedidos() {
         data: itens[0]?.data || todayISO(),
         desconto: descontoDoPedido,
         clientePrazo: cliente.prazo,
+        clientePrazoModelo: cliente.prazoModelo || "",
         formasPagamento,
         ...(vaiDireitoParaRecebidos ? { arquivado: true } : {}),
         ...(vaiDireitoParaComissoes ? { forcarPago: true } : {}),
@@ -480,13 +484,15 @@ export default function Pedidos() {
           </div>
           <div className="field">
             <label>Prazo de pagamento</label>
-            <select className="input" value={cliente.prazo ?? ""}
-              onChange={(e) => atualizarCliente("prazo", Number(e.target.value))}>
+            <select className="input" value={idPrazoAtual(cliente.prazoModelo, cliente.prazo)}
+              onChange={(e) => {
+                const opcao = OPCOES_PRAZO.find((o) => o.id === e.target.value);
+                setCliente((c) => ({ ...c, prazoModelo: opcao?.id || "", prazo: opcao?.dias ?? "" }));
+              }}>
               <option value="" disabled>Selecione...</option>
-              {OPCOES_PRAZO.map((o) => <option key={o.dias} value={o.dias}>{o.label}</option>)}
-              {cliente.prazo !== undefined && cliente.prazo !== null && cliente.prazo !== "" &&
-                !OPCOES_PRAZO.some((o) => o.dias === Number(cliente.prazo)) && (
-                  <option value={cliente.prazo}>{cliente.prazo} dias (personalizado)</option>
+              {OPCOES_PRAZO.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+              {!idPrazoAtual(cliente.prazoModelo, cliente.prazo) && cliente.prazo !== undefined && cliente.prazo !== null && cliente.prazo !== "" && (
+                <option value="">{cliente.prazo} dias (personalizado — escolha um modelo acima)</option>
               )}
             </select>
           </div>
