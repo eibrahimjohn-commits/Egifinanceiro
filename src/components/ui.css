@@ -165,7 +165,7 @@
     grid-template-columns: 1fr 1fr;
     gap: 16px;
     align-items: start;
-    max-width: 1400px;
+    max-width: 1600px;
     margin: 0 auto;
   }
   .pedidos-grid > .card {
@@ -254,6 +254,23 @@
 
 /* Pagamentos: o formulário fica com largura confortável mesmo na tela cheia,
    mas o histórico abaixo aproveita o espaço todo em colunas. */
+.pagamentos-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 .pagamentos-layout > form.card {
   max-width: 640px;
+}
+
+@media (min-width: 900px) {
+  .pagamentos-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 640px) minmax(320px, 1fr);
+    align-items: start;
+    gap: 20px;
+  }
+  .pagamentos-layout > form.card {
+    max-width: none;
+  }
 }

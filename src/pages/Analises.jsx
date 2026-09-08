@@ -117,37 +117,9 @@ export default function Analises({ onAbrirNoVales }) {
   });
   const temValeAberto = new Set(pedidos.filter((p) => p.status === "aberto").map((p) => p.clienteId));
 
-  const inativos = clientes.filter((c) => {
-    if (temValeAberto.has(c.id)) return false;
-    // se já sabemos que o CNPJ não está ativo (baixado/suspenso), não faz sentido
-    // sinalizar como "parou de comprar" — a empresa nem existe mais oficialmente
-    const situacao = (c.infoExtra?.situacaoCadastral || "").toUpperCase();
-    if (situacao && !situacao.includes("ATIVA")) return false;
-    // considera tanto pedidos lançados no sistema quanto a data vinda da planilha
-    const doSistema = ultimaCompraPorCliente[c.id];
-    const daPlanilha = c.ultimaCompraPlanilha;
-    const ultima = doSistema && daPlanilha
-      ? (doSistema > daPlanilha ? doSistema : daPlanilha)
-      : (doSistema || daPlanilha);
-    if (!ultima) return false; // nunca comprou - não é "parou de comprar"
-    const dias = (hoje - new Date(ultima)) / 86400000;
-    if (dias < DIAS_INATIVO) return false;
-    // se já entramos em contato recentemente (e ele não comprou depois disso),
-    // não repete na lista até passar o prazo de reabordagem
-    if (c.ultimoContatoInativo) {
-      const diasContato = (hoje - new Date(c.ultimoContatoInativo)) / 86400000;
-      const contatoDepoisDaCompra = new Date(c.ultimoContatoInativo) > new Date(ultima);
-      if (contatoDepoisDaCompra && diasContato < DIAS_COOLDOWN_CONTATO) return false;
-    }
-    return true;
-  });
-
   const [campoOrdInativos, dirOrdInativos] = ordenacaoInativos.split("_");
   const multOrdInativos = dirOrdInativos === "asc" ? 1 : -1;
 
-  // Agrupa os clientes inativos pelo campo "Grupo de cliente" — mesma lógica
-  // usada em Base de Dados e Vales, pra não listar 3 cards separados quando
-  // na prática é uma única relação comercial com vários CNPJs.
   function chaveGrupoCliente(c) {
     return (c.grupo || "").trim().toLowerCase() || `cli_${c.id}`;
   }
@@ -158,26 +130,58 @@ export default function Analises({ onAbrirNoVales }) {
     return ultimaCompraPorCliente[c.id] || c.ultimaCompraPlanilha || "";
   }
 
-  const gruposInativos = (() => {
-    const grupos = new Map();
-    inativos.forEach((c) => {
-      const chave = chaveGrupoCliente(c);
-      if (!grupos.has(chave)) {
-        grupos.set(chave, { chave, nomeGrupo: (c.grupo || "").trim(), clientes: [], representante: "" });
-      }
-      const g = grupos.get(chave);
-      g.clientes.push(c);
-      if (!g.representante && c.representante) g.representante = c.representante;
-    });
-    return Array.from(grupos.values()).map((g) => {
+  // IMPORTANTE: agrupamos TODOS os clientes primeiro (não só os que parecem
+  // inativos individualmente) — a decisão de "parou de comprar" tem que olhar
+  // o grupo inteiro. Se um cliente tem 5 CNPJs e só 1 deles comprou semana
+  // passada, o grupo inteiro ainda está ativo, mesmo que os outros 4 estejam
+  // parados há meses. Filtrar CNPJ por CNPJ antes de agrupar (como era antes)
+  // fazia grupos com relação ativa aparecerem como inativos.
+  const gruposTodos = new Map();
+  clientes.forEach((c) => {
+    const chave = chaveGrupoCliente(c);
+    if (!gruposTodos.has(chave)) {
+      gruposTodos.set(chave, { chave, nomeGrupo: (c.grupo || "").trim(), clientes: [], representante: "" });
+    }
+    const g = gruposTodos.get(chave);
+    g.clientes.push(c);
+    if (!g.representante && c.representante) g.representante = c.representante;
+  });
+
+  const gruposInativos = Array.from(gruposTodos.values())
+    .map((g) => {
       const ultimaCompra = g.clientes.reduce((max, c) => {
         const u = ultimaCompraDoCliente(c);
         return u && (!max || u > max) ? u : max;
       }, "");
       const mediaCompra = g.clientes.reduce((s, c) => s + (Number(c.mediaCompra) || 0), 0);
-      return { ...g, ultimaCompra, mediaCompra };
+      const temValeAbertoGrupo = g.clientes.some((c) => temValeAberto.has(c.id));
+      const ultimoContatoGrupo = g.clientes.reduce((max, c) => {
+        return c.ultimoContatoInativo && (!max || c.ultimoContatoInativo > max) ? c.ultimoContatoInativo : max;
+      }, "");
+      return { ...g, ultimaCompra, mediaCompra, temValeAbertoGrupo, ultimoContatoGrupo };
+    })
+    .filter((g) => {
+      // qualquer CNPJ do grupo com vale em aberto já mantém a relação viva
+      if (g.temValeAbertoGrupo) return false;
+      // só ignora o grupo inteiro se TODOS os CNPJs estiverem baixados/suspensos
+      // na Receita — aí sim a(s) empresa(s) não existe(m) mais oficialmente
+      const todosBaixados = g.clientes.every((c) => {
+        const situacao = (c.infoExtra?.situacaoCadastral || "").toUpperCase();
+        return situacao && !situacao.includes("ATIVA");
+      });
+      if (todosBaixados) return false;
+      if (!g.ultimaCompra) return false; // nunca comprou - não é "parou de comprar"
+      const dias = (hoje - new Date(g.ultimaCompra)) / 86400000;
+      if (dias < DIAS_INATIVO) return false;
+      // se já entramos em contato recentemente (e ninguém do grupo comprou depois
+      // disso), não repete na lista até passar o prazo de reabordagem
+      if (g.ultimoContatoGrupo) {
+        const diasContato = (hoje - new Date(g.ultimoContatoGrupo)) / 86400000;
+        const contatoDepoisDaCompra = new Date(g.ultimoContatoGrupo) > new Date(g.ultimaCompra);
+        if (contatoDepoisDaCompra && diasContato < DIAS_COOLDOWN_CONTATO) return false;
+      }
+      return true;
     });
-  })();
 
   const gruposInativosOrdenados = [...gruposInativos].sort((a, b) => {
     if (campoOrdInativos === "ultimaCompra") {
