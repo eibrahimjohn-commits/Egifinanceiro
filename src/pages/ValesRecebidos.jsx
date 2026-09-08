@@ -204,7 +204,17 @@ function DetalheExpandido({
           </div>
           <div className="field">
             <label>Forma de pagamento</label>
-            <select className="input" value={formaBaixa} onChange={(e) => setFormaBaixa(e.target.value)}>
+            <select className="input" value={formaBaixa} onChange={(e) => {
+              const novoTipo = e.target.value;
+              setFormaBaixa(novoTipo);
+              // Sugere prazo padrão de 30 dias ao trocar pra cheque, em vez de
+              // deixar o campo vazio esperando preenchimento manual.
+              if (novoTipo === "cheque" && !prazoUltimoChequeBaixa) {
+                const daqui30 = new Date();
+                daqui30.setDate(daqui30.getDate() + 30);
+                setPrazoUltimoChequeBaixa(daqui30.toISOString().slice(0, 10));
+              }
+            }}>
               {FORMAS_PAGAMENTO.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
             </select>
           </div>
@@ -464,6 +474,7 @@ function CardGrupo({ g, expandido, onToggle, onAbrirGrupo, children }) {
 
 export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const [sub, setSub] = useState("vales"); // vales | comissoes | recebidos
+  const [mostrarTotais, setMostrarTotais] = useState(false); // fica oculto até clicar em "Visualizar"
   const [pedidos, setPedidos] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -634,7 +645,20 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
 
   function editarParcelaBaixa(index, campo, valor) {
     const base = parcelasDaBaixa();
-    const novas = base.map((p, i) => (i === index ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p));
+    let novas;
+    if (index === 0 && campo === "data" && base.length > 1) {
+      const deltaDias = Math.round(
+        (new Date(valor + "T00:00:00") - new Date(base[0].data + "T00:00:00")) / 86400000
+      );
+      novas = base.map((p, i) => {
+        if (i === 0) return { ...p, data: valor };
+        const d = new Date(p.data + "T00:00:00");
+        d.setDate(d.getDate() + deltaDias);
+        return { ...p, data: d.toISOString().slice(0, 10) };
+      });
+    } else {
+      novas = base.map((p, i) => (i === index ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p));
+    }
     setParcelasBaixaManual(novas);
   }
 
@@ -816,17 +840,29 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
       </div>
 
       {sub === "vales" && (
-        <div className="card" style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Total a receber</div>
-            <strong style={{ fontSize: 22 }}>{formatCurrency(totalAReceberGeral)}</strong>
-          </div>
-          <div title="Estimativa: pedidos com prazo de 30 dias entram integralmente; prazos maiores entram proporcionalmente (ex: prazo de 90 dias conta 1/3 do saldo). Pedidos sem prazo definido entram integralmente.">
-            <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-              Previsto p/ próximos 30 dias <span style={{ cursor: "help" }}>ⓘ</span>
+        <div className="card">
+          {!mostrarTotais ? (
+            <button type="button" className="btn btn-secondary" onClick={() => setMostrarTotais(true)}>
+              👁 Visualizar totais
+            </button>
+          ) : (
+            <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Total a receber</div>
+                <strong style={{ fontSize: 22 }}>{formatCurrency(totalAReceberGeral)}</strong>
+              </div>
+              <div title="Estimativa: pedidos com prazo de 30 dias entram integralmente; prazos maiores entram proporcionalmente (ex: prazo de 90 dias conta 1/3 do saldo). Pedidos sem prazo definido entram integralmente.">
+                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                  Previsto p/ próximos 30 dias <span style={{ cursor: "help" }}>ⓘ</span>
+                </div>
+                <strong style={{ fontSize: 22, color: "var(--grape)" }}>{formatCurrency(totalProximos30Dias)}</strong>
+              </div>
+              <button type="button" className="btn btn-ghost" style={{ marginLeft: "auto", fontSize: 12, padding: "6px 10px" }}
+                onClick={() => setMostrarTotais(false)}>
+                Ocultar
+              </button>
             </div>
-            <strong style={{ fontSize: 22, color: "var(--grape)" }}>{formatCurrency(totalProximos30Dias)}</strong>
-          </div>
+          )}
         </div>
       )}
 

@@ -79,15 +79,18 @@ export default function Pedidos() {
     const termo = cliente[campo];
     if (!termo || !termo.trim()) return;
 
+    // Código e CNPJ só podem casar por igualdade exata — nunca por um pedaço
+    // de texto encontrado dentro do nome de outro cliente qualquer (isso já
+    // causou o formulário inteiro preencher sozinho com o cliente errado).
+    const modo = campo === "codigo" ? "codigo" : campo === "cnpj" ? "cnpj" : "nome";
+
     setBuscandoCampo(campo);
     setMatches([]);
     try {
-      const { exact, matches: encontrados } = await buscarCliente(termo);
+      const { exact, matches: encontrados } = await buscarCliente(termo, modo);
       if (exact) {
         preencherCliente(exact);
-      } else if (encontrados.length === 1) {
-        preencherCliente(encontrados[0]);
-      } else if (encontrados.length > 1) {
+      } else if (modo === "nome" && encontrados.length > 1) {
         setMatches(encontrados);
       }
     } finally {
@@ -104,8 +107,8 @@ export default function Pedidos() {
       return;
     }
     nomeDebounceRef.current = setTimeout(async () => {
-      const { exact, matches: encontrados } = await buscarCliente(valor);
-      setSugestoesNome(exact ? [exact] : encontrados);
+      const { matches: encontrados } = await buscarCliente(valor, "nome");
+      setSugestoesNome(encontrados);
     }, 300);
   }
 
@@ -198,7 +201,16 @@ export default function Pedidos() {
       // automática do zero — qualquer edição manual feita antes é descartada,
       // já que os parâmetros de base mudaram.
       const limpaEdicaoManual = ["valorTotal", "numFolhas", "prazoUltimoCheque"].includes(campo);
-      return { ...f, [campo]: valor, ...(limpaEdicaoManual ? { parcelasManual: null } : {}) };
+      const novaForma = { ...f, [campo]: valor, ...(limpaEdicaoManual ? { parcelasManual: null } : {}) };
+      // Ao trocar o tipo pra cheque, já sugere um prazo padrão de 30 dias pro
+      // último cheque (com 1 folha, é o próprio cheque; com mais folhas, dá o
+      // ponto de partida pra distribuir) — em vez de deixar em branco.
+      if (campo === "tipo" && valor === "cheque" && !f.prazoUltimoCheque) {
+        const daqui30 = new Date();
+        daqui30.setDate(daqui30.getDate() + 30);
+        novaForma.prazoUltimoCheque = daqui30.toISOString().slice(0, 10);
+      }
+      return novaForma;
     }));
   }
 
@@ -214,9 +226,25 @@ export default function Pedidos() {
     setFormas((arr) => arr.map((f, idx) => {
       if (idx !== i) return f;
       const base = parcelasDaForma(f);
-      const novasParcelas = base.map((p, pi) =>
-        pi === parcelaIndex ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p
-      );
+      let novasParcelas;
+      // Mudar a data da FOLHA 1 arrasta as folhas seguintes junto, mantendo o
+      // mesmo espaçamento entre elas — em vez de só mover a primeira e deixar
+      // as outras "para trás" dela ou soltas sem relação nenhuma.
+      if (parcelaIndex === 0 && campo === "data" && base.length > 1) {
+        const deltaDias = Math.round(
+          (new Date(valor + "T00:00:00") - new Date(base[0].data + "T00:00:00")) / 86400000
+        );
+        novasParcelas = base.map((p, pi) => {
+          if (pi === 0) return { ...p, data: valor };
+          const d = new Date(p.data + "T00:00:00");
+          d.setDate(d.getDate() + deltaDias);
+          return { ...p, data: d.toISOString().slice(0, 10) };
+        });
+      } else {
+        novasParcelas = base.map((p, pi) =>
+          pi === parcelaIndex ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p
+        );
+      }
       return { ...f, parcelasManual: novasParcelas };
     }));
   }

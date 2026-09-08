@@ -11,7 +11,7 @@ import Historico from "./pages/Historico";
 
 export default function App() {
   const [autenticado, setAutenticado] = useState(estaAutenticado());
-  const [tab, setTab] = useState("pedidos");
+  const [tab, setTab] = useState("vales");
   const [alvoVales, setAlvoVales] = useState(null); // pedido atrasado clicado nas Análises
 
   const WIDE_TABS = ["pedidos", "vales", "pagamentos", "analises", "base", "prospeccao", "historico"];

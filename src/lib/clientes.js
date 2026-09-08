@@ -32,29 +32,43 @@ export async function gerarCodigoUnico() {
   return String(Date.now()).slice(-8);
 }
 
-export async function buscarCliente(termo) {
+// `modo` decide o que esse termo TEM PERMISSÃO de casar — isso existe por causa
+// de um bug sério: buscar por código ou CNPJ e, sem achar nada exato, cair
+// pra procurar esse mesmo texto DENTRO do nome/razão social de qualquer
+// cliente. Como muita razão social tem números embutidos (CPF, registros
+// antigos etc.), digitar um código que não existe podia coincidir com um
+// pedaço do número de outro cliente qualquer — e o formulário inteiro
+// (CNPJ, cidade, prazo, desconto) preenchia sozinho com o cliente ERRADO,
+// sem pedir confirmação nenhuma. Agora cada modo só enxerga o que faz sentido:
+//   'codigo' -> só código exato. Sem match, retorna vazio (não vira busca por nome).
+//   'cnpj'   -> só CNPJ exato. Mesma regra.
+//   'nome'   -> busca por nome/razão social, que é pra isso que esse modo existe.
+export async function buscarCliente(termo, modo = "nome") {
   const termoLimpo = (termo || "").trim();
   if (!termoLimpo) return { exact: null, matches: [] };
 
-  const cnpjDigits = onlyDigits(termoLimpo);
-
-  // 1. tenta por código exato
-  const byCodeSnap = await getDocs(query(clientesRef, where("codigo", "==", termoLimpo)));
-  if (!byCodeSnap.empty) {
-    const d = byCodeSnap.docs[0];
-    return { exact: { id: d.id, ...d.data() }, matches: [] };
-  }
-
-  // 2. tenta por CNPJ (armazenado só com dígitos)
-  if (cnpjDigits.length >= 11) {
-    const byCnpjSnap = await getDocs(query(clientesRef, where("cnpjDigits", "==", cnpjDigits)));
-    if (!byCnpjSnap.empty) {
-      const d = byCnpjSnap.docs[0];
+  if (modo === "codigo") {
+    const byCodeSnap = await getDocs(query(clientesRef, where("codigo", "==", termoLimpo)));
+    if (!byCodeSnap.empty) {
+      const d = byCodeSnap.docs[0];
       return { exact: { id: d.id, ...d.data() }, matches: [] };
     }
+    return { exact: null, matches: [] };
   }
 
-  // 3. busca por nome (traz todos e filtra no cliente, base pequena)
+  if (modo === "cnpj") {
+    const cnpjDigits = onlyDigits(termoLimpo);
+    if (cnpjDigits.length >= 11) {
+      const byCnpjSnap = await getDocs(query(clientesRef, where("cnpjDigits", "==", cnpjDigits)));
+      if (!byCnpjSnap.empty) {
+        const d = byCnpjSnap.docs[0];
+        return { exact: { id: d.id, ...d.data() }, matches: [] };
+      }
+    }
+    return { exact: null, matches: [] };
+  }
+
+  // modo 'nome': busca por nome/razão social (traz todos e filtra no cliente, base pequena)
   const allSnap = await getDocs(clientesRef);
   const termoLower = termoLimpo.toLowerCase();
   const matches = allSnap.docs
@@ -65,7 +79,7 @@ export async function buscarCliente(termo) {
         c.razaoSocial?.toLowerCase().includes(termoLower)
     );
 
-  return { exact: null, matches };
+  return { exact: matches.length === 1 ? matches[0] : null, matches };
 }
 
 export async function listarClientes() {
