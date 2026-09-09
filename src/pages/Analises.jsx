@@ -3,7 +3,7 @@ import "../components/ui.css";
 import { listarPedidos, importarHistoricoPedidos, marcarConferido } from "../lib/pedidos";
 import { listarClientes, registrarContatoInativo } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
-import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido } from "../lib/constants";
+import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone } from "../lib/constants";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 
 const DIAS_INATIVO = 60;
@@ -117,6 +117,22 @@ export default function Analises({ onAbrirNoVales }) {
   });
   const temValeAberto = new Set(pedidos.filter((p) => p.status === "aberto").map((p) => p.clienteId));
 
+  // Cheque conta como "recebido" na hora da venda (mesmo com a compensação só
+  // acontecendo depois) — então um pedido pago só em cheque já nasce com
+  // status "pago", mesmo que a folha ainda não tenha vencido. Sem esse
+  // segundo check, um cliente com cheque de 90 dias pendente podia aparecer
+  // como "inativo" antes mesmo do cheque compensar.
+  const temChequeFuturo = new Set();
+  pedidos.forEach((p) => {
+    const parcelas = [
+      ...(p.formasPagamento || []).filter((f) => f.tipo === "cheque").flatMap((f) => f.parcelas || []),
+      ...(p.pagamentos || []).filter((pg) => pg.formaPagamento === "cheque" && pg.parcelas).flatMap((pg) => pg.parcelas || []),
+    ];
+    if (parcelas.some((parc) => parc.data && new Date(parc.data + "T00:00:00") > hoje)) {
+      temChequeFuturo.add(p.clienteId);
+    }
+  });
+
   const [campoOrdInativos, dirOrdInativos] = ordenacaoInativos.split("_");
   const multOrdInativos = dirOrdInativos === "asc" ? 1 : -1;
 
@@ -154,7 +170,7 @@ export default function Analises({ onAbrirNoVales }) {
         return u && (!max || u > max) ? u : max;
       }, "");
       const mediaCompra = g.clientes.reduce((s, c) => s + (Number(c.mediaCompra) || 0), 0);
-      const temValeAbertoGrupo = g.clientes.some((c) => temValeAberto.has(c.id));
+      const temValeAbertoGrupo = g.clientes.some((c) => temValeAberto.has(c.id) || temChequeFuturo.has(c.id));
       const ultimoContatoGrupo = g.clientes.reduce((max, c) => {
         return c.ultimoContatoInativo && (!max || c.ultimoContatoInativo > max) ? c.ultimoContatoInativo : max;
       }, "");
@@ -243,12 +259,17 @@ export default function Analises({ onAbrirNoVales }) {
       ...(c.infoExtra?.telefones || []).map((t) => ({ numero: t, rotulo: "Receita Federal" })),
     ];
     const vistos = new Set();
-    return candidatos.filter(({ numero }) => {
-      const digitos = String(numero || "").replace(/\D/g, "");
-      if (digitos.length < 8 || vistos.has(digitos)) return false;
-      vistos.add(digitos);
-      return true;
-    });
+    return candidatos
+      .map(({ numero, rotulo }) => {
+        const { numero: ajustado, ajustado: foiAjustado } = normalizarTelefone(numero);
+        return { numero: ajustado || numero, rotulo, foiAjustado };
+      })
+      .filter(({ numero }) => {
+        const digitos = String(numero || "").replace(/\D/g, "");
+        if (digitos.length < 8 || vistos.has(digitos)) return false;
+        vistos.add(digitos);
+        return true;
+      });
   }
 
   // Heatmap por cidade/estado — usa o cadastro ATUAL do cliente (não a cópia
@@ -371,8 +392,20 @@ export default function Analises({ onAbrirNoVales }) {
       </div>
       )}
 
+      <div className="analises-nav-mobile">
+        <button type="button" onClick={() => document.getElementById("secao-atrasados")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+          🔴 Atrasados ({atrasados.length})
+        </button>
+        <button type="button" onClick={() => document.getElementById("secao-inativos")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+          😴 Inativos ({gruposInativosOrdenados.length})
+        </button>
+        <button type="button" onClick={() => document.getElementById("secao-mapa-calor")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+          🗺️ Mapa de calor
+        </button>
+      </div>
+
       <div className="analises-grid">
-        <div className="card">
+        <div className="card" id="secao-atrasados">
           <h2 className="card-title">Pagamentos atrasados ({atrasados.length})</h2>
           <div className="analises-col-scroll">
             {atrasados.length === 0 ? (
@@ -409,7 +442,7 @@ export default function Analises({ onAbrirNoVales }) {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card" id="secao-inativos">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 14 }}>
             <h2 className="card-title" style={{ marginBottom: 0 }}>Clientes inativos (+{DIAS_INATIVO} dias, sem pendências)</h2>
             <select className="input" style={{ width: "auto", padding: "6px 10px", fontSize: 12 }}
@@ -449,10 +482,10 @@ export default function Analises({ onAbrirNoVales }) {
                     </div>
                     {telefones.length > 0 && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {telefones.map(({ numero, rotulo }) => (
+                        {telefones.map(({ numero, rotulo, foiAjustado }) => (
                           <div key={numero} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                              📞 {numero} <span style={{ fontSize: 11 }}>({rotulo})</span>
+                              📞 {numero} <span style={{ fontSize: 11 }}>({rotulo}{foiAjustado ? " · 9 adicionado" : ""})</span>
                             </span>
                             <a href={linkWhatsAppInativo(numero, nomeGrupoOuCliente(g))} target="_blank" rel="noopener noreferrer"
                               className="btn btn-secondary" style={{ fontSize: 12, padding: "4px 10px" }}
@@ -483,7 +516,7 @@ export default function Analises({ onAbrirNoVales }) {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card" id="secao-mapa-calor">
           <h2 className="card-title">Mapa de calor — por cidade/estado</h2>
           <div className="analises-col-scroll">
             {cidadesOrdenadas.length === 0 ? (

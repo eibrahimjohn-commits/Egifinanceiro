@@ -451,9 +451,10 @@ function DetalheExpandido({
   );
 }
 
-function CardGrupo({ g, expandido, onToggle, onAbrirGrupo, children }) {
+function CardGrupo({ g, expandido, onToggle, onAbrirGrupo, destacado, onAlternarDestaque, children }) {
   return (
-    <div className="card" style={{ padding: 14 }}>
+    <div className="card" style={{ padding: 14, background: destacado ? "var(--yellow-light)" : "var(--card)" }}
+      onContextMenu={(e) => { e.preventDefault(); onAlternarDestaque?.(g.chave); }}>
       <div style={{ display: "flex", justifyContent: "space-between", cursor: "pointer" }}
         onClick={() => onToggle(g.chave)} onDoubleClick={() => onAbrirGrupo?.(g)}>
         <div>
@@ -475,6 +476,35 @@ function CardGrupo({ g, expandido, onToggle, onAbrirGrupo, children }) {
 export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const [sub, setSub] = useState("vales"); // vales | comissoes | recebidos
   const [mostrarTotais, setMostrarTotais] = useState(false); // fica oculto até clicar em "Visualizar"
+
+  // Marcação visual (botão direito do mouse) — só pra layout, ajuda a
+  // acompanhar quem já foi revisado. Fica salvo no navegador, não no banco.
+  const [destacados, setDestacados] = useState(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem("egi-financeiro-destacados") || "[]"));
+    } catch {
+      return new Set();
+    }
+  });
+
+  function salvarDestacados(novoSet) {
+    setDestacados(novoSet);
+    try {
+      localStorage.setItem("egi-financeiro-destacados", JSON.stringify([...novoSet]));
+    } catch {
+      // se o navegador bloquear localStorage, só não persiste — não quebra a tela
+    }
+  }
+
+  function alternarDestaque(chave) {
+    const novo = new Set(destacados);
+    if (novo.has(chave)) novo.delete(chave); else novo.add(chave);
+    salvarDestacados(novo);
+  }
+
+  function limparDestacados() {
+    salvarDestacados(new Set());
+  }
   const [pedidos, setPedidos] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -841,28 +871,40 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
 
       {sub === "vales" && (
         <div className="card">
-          {!mostrarTotais ? (
-            <button type="button" className="btn btn-secondary" onClick={() => setMostrarTotais(true)}>
-              👁 Visualizar totais
-            </button>
-          ) : (
-            <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
-              <div>
-                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Total a receber</div>
-                <strong style={{ fontSize: 22 }}>{formatCurrency(totalAReceberGeral)}</strong>
-              </div>
-              <div title="Estimativa: pedidos com prazo de 30 dias entram integralmente; prazos maiores entram proporcionalmente (ex: prazo de 90 dias conta 1/3 do saldo). Pedidos sem prazo definido entram integralmente.">
-                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                  Previsto p/ próximos 30 dias <span style={{ cursor: "help" }}>ⓘ</span>
-                </div>
-                <strong style={{ fontSize: 22, color: "var(--grape)" }}>{formatCurrency(totalProximos30Dias)}</strong>
-              </div>
-              <button type="button" className="btn btn-ghost" style={{ marginLeft: "auto", fontSize: 12, padding: "6px 10px" }}
-                onClick={() => setMostrarTotais(false)}>
-                Ocultar
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+            {!mostrarTotais ? (
+              <button type="button" className="btn btn-secondary" onClick={() => setMostrarTotais(true)}>
+                👁 Visualizar totais
               </button>
+            ) : (
+              <>
+                <div>
+                  <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Total a receber</div>
+                  <strong style={{ fontSize: 22 }}>{formatCurrency(totalAReceberGeral)}</strong>
+                </div>
+                <div title="Estimativa: pedidos com prazo de 30 dias entram integralmente; prazos maiores entram proporcionalmente (ex: prazo de 90 dias conta 1/3 do saldo). Pedidos sem prazo definido entram integralmente.">
+                  <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                    Previsto p/ próximos 30 dias <span style={{ cursor: "help" }}>ⓘ</span>
+                  </div>
+                  <strong style={{ fontSize: 22, color: "var(--grape)" }}>{formatCurrency(totalProximos30Dias)}</strong>
+                </div>
+              </>
+            )}
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+              {destacados.size > 0 && (
+                <button type="button" className="btn btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }}
+                  onClick={limparDestacados}>
+                  Voltar para fundo branco
+                </button>
+              )}
+              {mostrarTotais && (
+                <button type="button" className="btn btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }}
+                  onClick={() => setMostrarTotais(false)}>
+                  Ocultar
+                </button>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
 
@@ -874,7 +916,8 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
         ) : (
           <div className="lista-grid">
             {gruposVales.map((g) => (
-              <CardGrupo key={g.chave} g={g} expandido={expandidos.has(g.chave)} onToggle={toggleExpandido} onAbrirGrupo={abrirGrupo}>
+              <CardGrupo key={g.chave} g={g} expandido={expandidos.has(g.chave)} onToggle={toggleExpandido} onAbrirGrupo={abrirGrupo}
+                destacado={destacados.has(g.chave)} onAlternarDestaque={alternarDestaque}>
                 <DetalheExpandido
                   g={g}
                   pedidoBaixa={pedidoBaixa} onAbrirBaixa={abrirBaixa} onCancelarBaixa={() => setPedidoBaixa(null)} onConfirmarBaixa={confirmarBaixa}
@@ -917,7 +960,9 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
             )}
             <div className="lista-grid">
               {comissoesFiltradas.map((p) => (
-                <div key={p.id} className="list-item" onClick={() => toggleSelecaoComissao(p.id)} style={{ alignItems: "center" }}>
+                <div key={p.id} className="list-item" onClick={() => toggleSelecaoComissao(p.id)}
+                  onContextMenu={(e) => { e.preventDefault(); alternarDestaque("comissao_" + p.id); }}
+                  style={{ alignItems: "center", background: destacados.has("comissao_" + p.id) ? "var(--yellow-light)" : "var(--card)" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <input type="checkbox" checked={selecionadosComissao.has(p.id)} onChange={() => toggleSelecaoComissao(p.id)} onClick={(e) => e.stopPropagation()} />
                     <div>

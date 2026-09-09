@@ -325,8 +325,46 @@ export function todayISO() {
 
 // Gera o link do WhatsApp com o número já formatado (adiciona 55 se faltar) e a
 // mensagem de reengajamento pronta pro cliente inativo.
+// Números de celular brasileiro ganharam o 9º dígito entre 2012 e 2016 — muito
+// cadastro antigo ainda guarda o número "raiz", sem esse 9 na frente. Esse
+// número velho não entrega mensagem no WhatsApp de verdade (o app espera o
+// formato completo). Aqui a gente detecta pelo primeiro dígito do número
+// local: celular sempre começa com 6, 7, 8 ou 9; fixo começa com 2 a 5.
+//   8 dígitos começando com 6-9 -> celular antigo, sem o 9 -> adiciona
+//   9 dígitos começando com 9   -> celular já certo -> não mexe
+//   8 dígitos começando com 2-5 -> fixo -> não mexe (fixo não tem 9º dígito)
+// Sem DDD reconhecível (menos de 10 dígitos), devolve o número original sem
+// arriscar montar um DDD errado.
+export function normalizarTelefone(numeroBruto) {
+  let digitos = String(numeroBruto || "").replace(/\D/g, "");
+  if (!digitos) return { numero: "", ajustado: false };
+
+  // tira o DDI 55 se já vier com ele, pra trabalhar só com DDD + local
+  if (digitos.length > 11 && digitos.startsWith("55")) digitos = digitos.slice(2);
+
+  if (digitos.length < 10 || digitos.length > 11) {
+    return { numero: numeroBruto, ajustado: false }; // formato não reconhecível, não mexe
+  }
+
+  const ddd = digitos.slice(0, 2);
+  let local = digitos.slice(2);
+  let ajustado = false;
+
+  if (local.length === 8 && /^[6-9]/.test(local)) {
+    local = "9" + local;
+    ajustado = true;
+  }
+
+  const formatado = local.length === 9
+    ? `(${ddd}) ${local[0]}${local.slice(1, 5)}-${local.slice(5)}`
+    : `(${ddd}) ${local.slice(0, 4)}-${local.slice(4)}`;
+
+  return { numero: formatado, ajustado };
+}
+
 export function linkWhatsAppInativo(telefone, nomeCliente) {
-  let digitos = String(telefone || "").replace(/\D/g, "");
+  const { numero: normalizado } = normalizarTelefone(telefone);
+  let digitos = String(normalizado || telefone || "").replace(/\D/g, "");
   if (digitos.length <= 11) digitos = "55" + digitos; // adiciona DDI Brasil se faltar
   const mensagem =
     `Olá ${nomeCliente}, tudo bem?\n` +

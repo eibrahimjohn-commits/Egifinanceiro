@@ -274,3 +274,35 @@
     max-width: none;
   }
 }
+
+/* Análises: atalhos de navegação pro topo de cada bloco — só no celular, onde
+   tem que rolar bastante pra chegar nos inativos/mapa de calor. No desktop os
+   3 blocos já ficam lado a lado, então esses botões não fazem falta. */
+.analises-nav-mobile {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 2px 12px;
+  -webkit-overflow-scrolling: touch;
+}
+.analises-nav-mobile button {
+  flex: 0 0 auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.analises-nav-mobile button:active {
+  background: var(--pink-light);
+}
+
+@media (min-width: 900px) {
+  .analises-nav-mobile {
+    display: none;
+  }
+}
