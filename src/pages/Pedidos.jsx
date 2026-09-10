@@ -412,7 +412,7 @@ export default function Pedidos() {
                 <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>Cheque(s) a cair:</div>
                 {aviso.chequesACair.map((c, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "4px 0" }}>
-                    <span>Folha {c.numero} — {formatDate(c.data)}</span>
+                    <span>N°{c.numero} — {formatDate(c.data)}</span>
                     <strong>{formatCurrency(c.valor)}</strong>
                   </div>
                 ))}
@@ -666,7 +666,7 @@ export default function Pedidos() {
                   <div style={{ marginTop: 4 }}>
                     {parcelasDaForma(f).map((p, pi) => (
                       <div key={p.numero} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                        <span style={{ fontSize: 13, color: "var(--ink-soft)", flexShrink: 0, width: 56 }}>Folha {p.numero}</span>
+                        <span style={{ fontSize: 13, color: "var(--ink-soft)", flexShrink: 0, width: 34 }}>N°{p.numero}</span>
                         <input className="input" type="number" step="0.01" value={p.valor}
                           onChange={(e) => atualizarParcela(i, pi, "valor", e.target.value)}
                           style={{ flex: 1 }} />

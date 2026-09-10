@@ -103,7 +103,7 @@ export default function ClienteCadastroModal({
     const id = await salvarCliente(editando, editando.id || null);
     const salvo = { ...editando, id };
     setSalvando(false);
-    mostrarToast("Cliente salvo!");
+    mostrarToast(editando.grupo?.trim() ? "Cliente salvo! Representante, desconto, prazo e observação replicados pro grupo." : "Cliente salvo!");
     onSaved?.(salvo);
 
     const eraNovo = !editando.id;

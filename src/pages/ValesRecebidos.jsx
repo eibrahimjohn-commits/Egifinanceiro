@@ -7,6 +7,7 @@ import {
   formatCurrency, formatDate, todayISO, FORMAS_PAGAMENTO, CONTAS_PADRAO,
   pedidoEstaAtrasado, calcularPercentualAberto, tagResumoCliente, podeMoverParaRecebidos,
   calcularParcelasCheque, valorDevidoDoPedido, valorPagoDoPedido, saldoDoPedido,
+  parseDescontoPercent,
 } from "../lib/constants";
 
 const FORMAS_COM_CONTA = ["pix_ted", "deposito"];
@@ -246,7 +247,7 @@ function DetalheExpandido({
                 <div style={{ background: "white", borderRadius: 10, padding: 10, marginBottom: 12 }}>
                   {parcelasDaBaixa().map((p, pi) => (
                     <div key={p.numero} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                      <span style={{ fontSize: 12, color: "var(--ink-soft)", flexShrink: 0, width: 50 }}>Folha {p.numero}</span>
+                      <span style={{ fontSize: 12, color: "var(--ink-soft)", flexShrink: 0, width: 32 }}>N°{p.numero}</span>
                       <input className="input" type="number" step="0.01" value={p.valor}
                         onChange={(e) => onEditarParcelaBaixa(pi, "valor", e.target.value)}
                         style={{ flex: 1, padding: "6px 8px", fontSize: 13 }} />
@@ -281,6 +282,8 @@ function DetalheExpandido({
         <h3 style={{ fontSize: 14, marginBottom: 10 }}>Compras</h3>
         {g.pedidos.flatMap((p) => (p.itens?.length ? p.itens : [{ valor: p.valor, data: p.data }]).map((it, i) => {
           const editandoEsse = editandoItem?.pedido.id === p.id && editandoItem?.itemIndex === i;
+          const percentDesconto = parseDescontoPercent(p.desconto);
+          const valorComDesconto = percentDesconto > 0 ? Number(it.valor) * (1 - percentDesconto / 100) : Number(it.valor);
           return (
             <div key={p.id + "_" + i} style={{ padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
               {editandoEsse ? (
@@ -301,7 +304,12 @@ function DetalheExpandido({
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
                   <span>{formatDate(it.data)}</span>
                   <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <strong>{formatCurrency(it.valor)}</strong>
+                    <span style={{ textAlign: "right" }}>
+                      <strong>{formatCurrency(valorComDesconto)}</strong>
+                      {percentDesconto > 0 && (
+                        <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>({formatCurrency(it.valor)})</div>
+                      )}
+                    </span>
                     {!somenteLeitura && (
                       <button type="button" className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }}
                         onClick={() => onAbrirEdicaoItem(p, i, it.valor, it.data)} title="Editar">✎</button>
@@ -312,6 +320,10 @@ function DetalheExpandido({
             </div>
           );
         }))}
+        <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, fontSize: 13 }}>
+          <strong>Total</strong>
+          <strong>{formatCurrency(g.totalDevido)}</strong>
+        </div>
       </div>
 
       {g.pedidos.some((p) => p.historicoEdicoes?.length > 0) && (
@@ -342,7 +354,7 @@ function DetalheExpandido({
             ...(p.formasPagamento?.filter((f) => f.tipo === "cheque").flatMap((f, fi) =>
               (f.parcelas || []).map((parc) => (
                 <div key={p.id + "_ch_" + fi + "_" + parc.numero} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-                  <span>Folha {parc.numero} — {formatDate(parc.data)}</span>
+                  <span>N°{parc.numero} — {formatDate(parc.data)}</span>
                   <strong>{formatCurrency(parc.valor)}</strong>
                 </div>
               ))
@@ -350,7 +362,7 @@ function DetalheExpandido({
             ...(p.pagamentos?.filter((pg) => pg.formaPagamento === "cheque" && pg.parcelas).flatMap((pg, pgi) =>
               (pg.parcelas || []).map((parc) => (
                 <div key={p.id + "_bx_" + pgi + "_" + parc.numero} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-                  <span>Folha {parc.numero} (pagamento) — {formatDate(parc.data)}</span>
+                  <span>N°{parc.numero} (pagamento) — {formatDate(parc.data)}</span>
                   <strong>{formatCurrency(parc.valor)}</strong>
                 </div>
               ))
@@ -411,6 +423,10 @@ function DetalheExpandido({
               </div>
             );
           })}
+          <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, fontSize: 13 }}>
+            <strong>Total</strong>
+            <strong>{formatCurrency(historico.reduce((s, pg) => s + (Number(pg.valor) || 0), 0))}</strong>
+          </div>
         </div>
       )}
 
@@ -953,11 +969,21 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
           <div className="empty-state">Nenhum pedido pago aguardando comissão.</div>
         ) : (
           <>
-            {selecionadosComissao.size > 0 && (
-              <button className="btn btn-primary btn-block" style={{ marginBottom: 12 }} onClick={confirmarComissaoPaga}>
-                Comissão paga ({selecionadosComissao.size} selecionado{selecionadosComissao.size > 1 ? "s" : ""})
-              </button>
-            )}
+            {selecionadosComissao.size > 0 && (() => {
+              const totalVales = comissoesFiltradas
+                .filter((p) => selecionadosComissao.has(p.id))
+                .reduce((s, p) => s + (Number(p.valor) || 0), 0);
+              const totalComissao = totalVales * 0.05;
+              return (
+                <button className="btn btn-primary btn-block" style={{ marginBottom: 12, height: "auto", padding: "10px 16px" }}
+                  onClick={confirmarComissaoPaga}>
+                  <div>Comissão paga ({selecionadosComissao.size} selecionado{selecionadosComissao.size > 1 ? "s" : ""})</div>
+                  <div style={{ fontSize: 12, fontWeight: 400, opacity: 0.9, marginTop: 2 }}>
+                    Total dos vales: {formatCurrency(totalVales)} · A pagar (5%): {formatCurrency(totalComissao)}
+                  </div>
+                </button>
+              );
+            })()}
             <div className="lista-grid">
               {comissoesFiltradas.map((p) => (
                 <div key={p.id} className="list-item" onClick={() => toggleSelecaoComissao(p.id)}

@@ -98,14 +98,46 @@ export async function salvarCliente(dadosCliente, id = null) {
     cnpjDigits: onlyDigits(dadosCliente.cnpj),
     updatedAt: serverTimestamp(),
   };
+  let idSalvo;
   if (id) {
     await updateDoc(doc(db, "clientes", id), payload);
-    return id;
+    idSalvo = id;
   } else {
     payload.createdAt = serverTimestamp();
     const docRef = await addDoc(clientesRef, payload);
-    return docRef.id;
+    idSalvo = docRef.id;
   }
+
+  // Representante, desconto, prazo e observação são combinados comerciais do
+  // GRUPO, não de um CNPJ isolado — então replica pros outros cadastros do
+  // mesmo grupo automaticamente. Cidade/telefone/etc continuam por CNPJ,
+  // já que cada loja física tem o seu.
+  if (dadosCliente.grupo?.trim()) {
+    await replicarDadosParaGrupo(idSalvo, dadosCliente.grupo, {
+      representante: dadosCliente.representante || "",
+      descontoPadrao: dadosCliente.descontoPadrao || "",
+      prazo: dadosCliente.prazo ?? "",
+      prazoModelo: dadosCliente.prazoModelo || "",
+      observacao: dadosCliente.observacao || "",
+    });
+  }
+
+  return idSalvo;
+}
+
+async function replicarDadosParaGrupo(idClienteSalvo, grupo, camposParaReplicar) {
+  const chave = grupo.trim().toLowerCase();
+  const snap = await getDocs(clientesRef);
+  const batch = writeBatch(db);
+  let algumParaAtualizar = false;
+  snap.docs.forEach((d) => {
+    if (d.id === idClienteSalvo) return;
+    const dados = d.data();
+    if ((dados.grupo || "").trim().toLowerCase() !== chave) return;
+    batch.update(doc(db, "clientes", d.id), { ...camposParaReplicar, updatedAt: serverTimestamp() });
+    algumParaAtualizar = true;
+  });
+  if (algumParaAtualizar) await batch.commit();
 }
 
 export async function importarClientes(linhas, onProgresso) {
