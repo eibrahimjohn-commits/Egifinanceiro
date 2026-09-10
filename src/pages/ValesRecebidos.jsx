@@ -141,6 +141,24 @@ function DetalheExpandido({
     .flatMap((p) => (p.pagamentos || []).map((pg, pagamentoIndex) => ({ ...pg, pedidoData: p.data, pedido: p, pagamentoIndex })))
     .sort((a, b) => new Date(b.data) - new Date(a.data));
 
+  // Soma exatamente o que está listado em "Compras" (já com desconto aplicado
+  // por item) — em vez do total oficial gravado no pedido. Pra pedidos
+  // antigos/congelados os dois podem divergir (a lista reconstruída da
+  // planilha antiga às vezes não captura 100% do histórico original), então
+  // mostramos os dois e avisamos quando não batem, em vez de esconder a
+  // diferença atrás de um único número que não bate com o que está na tela.
+  const somaComprasListadas = g.pedidos.reduce((soma, p) => {
+    const percentDesconto = parseDescontoPercent(p.desconto);
+    const itens = p.itens?.length ? p.itens : [{ valor: p.valor, data: p.data }];
+    return soma + itens.reduce((s, it) => {
+      const valorComDesconto = percentDesconto > 0 ? Number(it.valor) * (1 - percentDesconto / 100) : Number(it.valor);
+      return s + valorComDesconto;
+    }, 0);
+  }, 0);
+  const compraseDivergemDoOficial = Math.abs(somaComprasListadas - g.totalDevido) > 0.5;
+  const somaPagamentosListados = historico.reduce((s, pg) => s + (Number(pg.valor) || 0), 0);
+  const pagamentosDivergemDoOficial = Math.abs(somaPagamentosListados - g.totalPago) > 0.5;
+
   // O que foi recebido JÁ NA VENDA (dinheiro/cheque/conta de 3º na hora do
   // pedido) nunca aparecia em lugar nenhum — só "Pagamentos" (baixas feitas
   // depois) e "Compras" (o que foi vendido). Por isso um pedido pago à vista
@@ -321,9 +339,17 @@ function DetalheExpandido({
           );
         }))}
         <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, fontSize: 13 }}>
-          <strong>Total</strong>
-          <strong>{formatCurrency(g.totalDevido)}</strong>
+          <strong>Total das compras listadas</strong>
+          <strong>{formatCurrency(somaComprasListadas)}</strong>
         </div>
+        {compraseDivergemDoOficial && (
+          <div style={{ fontSize: 11, color: "#9a6b00", background: "var(--yellow-light)", borderRadius: 8, padding: "6px 8px", marginTop: 6 }}>
+            ⚠ O valor "em aberto" no card usa {formatCurrency(g.totalDevido)} (número oficial gravado no pedido),
+            diferente da soma das compras acima. Em pedidos antigos importados da planilha, a lista de compras é
+            uma reconstrução que às vezes não captura 100% do histórico original — o número oficial é o confiável
+            pra saldo e cobrança.
+          </div>
+        )}
       </div>
 
       {g.pedidos.some((p) => p.historicoEdicoes?.length > 0) && (
@@ -425,8 +451,14 @@ function DetalheExpandido({
           })}
           <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, fontSize: 13 }}>
             <strong>Total</strong>
-            <strong>{formatCurrency(historico.reduce((s, pg) => s + (Number(pg.valor) || 0), 0))}</strong>
+            <strong>{formatCurrency(somaPagamentosListados)}</strong>
           </div>
+          {pagamentosDivergemDoOficial && (
+            <div style={{ fontSize: 11, color: "#9a6b00", background: "var(--yellow-light)", borderRadius: 8, padding: "6px 8px", marginTop: 6 }}>
+              ⚠ O "já pago" oficial gravado no pedido é {formatCurrency(g.totalPago)}, diferente da soma dos
+              pagamentos listados acima. Mesma causa do aviso em Compras: reconstrução da planilha antiga.
+            </div>
+          )}
         </div>
       )}
 
