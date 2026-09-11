@@ -9,6 +9,8 @@ const TABS = [
   { id: "base", label: "Base de Dados" },
   { id: "prospeccao", label: "Prospecção" },
   { id: "historico", label: "Histórico" },
+  { id: "vendas", label: "Vendas" },
+  { id: "produtos", label: "Produtos" },
 ];
 
 export default function Layout({ active, onChange, wide, full, children }) {
