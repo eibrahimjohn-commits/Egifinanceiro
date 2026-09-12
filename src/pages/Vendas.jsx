@@ -163,8 +163,17 @@ export default function Vendas() {
     if (!preview) return;
     setImportando(true);
     setProgresso({ feito: 0, total: preview.linhas.length });
+    // Rede de segurança: se QUALQUER etapa travar sem erro (mesmo com os
+    // timeouts internos), a tela nunca fica presa pra sempre sem avisar —
+    // depois de 60s ela desiste e mostra um erro, em vez de girar infinito.
+    const comLimiteDeTempo = (promessa) => Promise.race([
+      promessa,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("A importação demorou demais (mais de 2 minutos) e foi interrompida. Tente um arquivo menor ou avise o suporte.")), 120000)),
+    ]);
     try {
-      const resultado = await importarPlanilhaVendas(preview.linhas, preview.nomeArquivo, (feito, total) => setProgresso({ feito, total }));
+      const resultado = await comLimiteDeTempo(
+        importarPlanilhaVendas(preview.linhas, preview.nomeArquivo, (feito, total) => setProgresso({ feito, total }))
+      );
       mostrarToast(`Importado! ${resultado.linhasProcessadas} linhas · ${formatCurrency(resultado.faturamentoTotal)} · meses: ${resultado.meses.join(", ")}`);
       setPreview(null);
       carregarImportacoes();
@@ -204,6 +213,7 @@ export default function Vendas() {
 
       <div className="card">
         <h2 className="card-title">Importar histórico de vendas</h2>
+        <div style={{ fontSize: 11, color: "var(--ink-soft)", marginBottom: 8 }}>versão do módulo de vendas: 2026-09-12-b</div>
         <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
           Planilha com Data, Nº Pedido, Produto, Código, Cliente, Quantidade, Unidade, Valor Unitário e
           Valor Total. Pode importar aos poucos (por trimestre ou ano) — reimportar o mesmo período não duplica nada.
