@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarResumoProdutos } from "../lib/vendas";
+import { listarResumoProdutos, listarImportacoes } from "../lib/vendas";
 import { formatCurrency } from "../lib/constants";
 import SeletorPeriodo from "../components/SeletorPeriodo";
 import {
@@ -14,10 +14,23 @@ function mesAtras(n) {
 }
 
 const CORES_CLASSE = { A: "var(--green)", B: "var(--yellow)", C: "var(--ink-soft)" };
+const CHAVE_ESTADO = "egi-financeiro-produtos-estado";
+
+function carregarEstadoSalvo() {
+  try {
+    const salvo = JSON.parse(localStorage.getItem(CHAVE_ESTADO));
+    if (salvo?.mesInicio && salvo?.mesFim) return salvo;
+  } catch {
+    // segue com o padrão se não der pra ler
+  }
+  return { mesInicio: mesAtras(2), mesFim: mesAtras(0) };
+}
 
 export default function Produtos() {
-  const [mesInicio, setMesInicio] = useState(mesAtras(2));
-  const [mesFim, setMesFim] = useState(mesAtras(0));
+  const estadoInicial = carregarEstadoSalvo();
+  const [mesInicio, setMesInicio] = useState(estadoInicial.mesInicio);
+  const [mesFim, setMesFim] = useState(estadoInicial.mesFim);
+  const [importacoes, setImportacoes] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [produtos, setProdutos] = useState([]);
   const [busca, setBusca] = useState("");
@@ -26,11 +39,19 @@ export default function Produtos() {
 
   async function carregar() {
     setCarregando(true);
-    setProdutos(await listarResumoProdutos(mesInicio, mesFim));
+    const [prods, imps] = await Promise.all([
+      listarResumoProdutos(mesInicio, mesFim),
+      listarImportacoes(),
+    ]);
+    setProdutos(prods);
+    setImportacoes(imps);
     setCarregando(false);
   }
 
   useEffect(() => { carregar(); }, [mesInicio, mesFim]);
+  useEffect(() => {
+    localStorage.setItem(CHAVE_ESTADO, JSON.stringify({ mesInicio, mesFim }));
+  }, [mesInicio, mesFim]);
 
   // Curva ABC: ordena por faturamento desc, acumula % até 80% (A), até 95% (B), resto (C).
   // É a forma padrão de enxergar concentração — quais poucos produtos sustentam a maior
@@ -73,6 +94,7 @@ export default function Produtos() {
     <div>
       <SeletorPeriodo
         mesInicio={mesInicio} mesFim={mesFim}
+        anoMinimo={importacoes.length ? Math.min(...importacoes.flatMap((i) => i.meses || []).map((m) => Number(m.slice(0, 4)))) : undefined}
         onChange={(inicio, fim) => { setMesInicio(inicio); setMesFim(fim); }}
       />
 
