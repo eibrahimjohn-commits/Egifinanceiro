@@ -2,8 +2,10 @@ import * as XLSX from "xlsx";
 import {
   collection, doc, getDocsFromServer, query, where, writeBatch, addDoc, serverTimestamp,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { dbVendas } from "./firebaseVendas";
 import { dbPortal } from "./firebasePortal";
+
+const db = dbVendas();
 
 const linhasRef = collection(db, "vendasLinhas");
 const resumoDiarioRef = collection(db, "vendasResumoDiario");
@@ -277,4 +279,57 @@ export async function listarResumoClientes(mesInicio, mesFim) {
 export async function listarLinhasDoPedido(pedido) {
   const snap = await getDocsFromServer(query(linhasRef, where("pedido", "==", String(pedido))));
   return snap.docs.map((d) => d.data());
+}
+
+// Detalhe de um produto específico — só é chamado quando a pessoa clica pra
+// investigar (não faz parte do carregamento normal do dashboard). Lê o bruto
+// de TODAS as vendas desse produto (todos os meses importados) e monta:
+// evolução mês a mês, ranking de clientes (todo o histórico e últimos 12
+// meses) e quantos clientes distintos já compraram.
+export async function buscarDetalheProduto(codigoProduto) {
+  const snap = await getDocsFromServer(query(linhasRef, where("codigoProduto", "==", codigoProduto)));
+  const linhas = snap.docs.map((d) => d.data());
+
+  const porMes = new Map();
+  const porClienteTodoPeriodo = new Map();
+  const porClienteUltimoAno = new Map();
+
+  const hoje = new Date();
+  const umAnoAtras = new Date(hoje.getFullYear() - 1, hoje.getMonth(), hoje.getDate()).toISOString().slice(0, 10);
+
+  linhas.forEach((l) => {
+    const mes = porMes.get(l.mes) || { mes: l.mes, qtd: 0, faturamento: 0 };
+    mes.qtd += l.qtd;
+    mes.faturamento += l.valorTotal;
+    porMes.set(l.mes, mes);
+
+    const cli = porClienteTodoPeriodo.get(l.cliente) || { cliente: l.cliente, qtd: 0, faturamento: 0, pedidos: new Set() };
+    cli.qtd += l.qtd;
+    cli.faturamento += l.valorTotal;
+    cli.pedidos.add(l.pedido);
+    porClienteTodoPeriodo.set(l.cliente, cli);
+
+    if (l.data >= umAnoAtras) {
+      const cliAno = porClienteUltimoAno.get(l.cliente) || { cliente: l.cliente, qtd: 0, faturamento: 0, pedidos: new Set() };
+      cliAno.qtd += l.qtd;
+      cliAno.faturamento += l.valorTotal;
+      cliAno.pedidos.add(l.pedido);
+      porClienteUltimoAno.set(l.cliente, cliAno);
+    }
+  });
+
+  function finalizarClientes(mapa) {
+    return Array.from(mapa.values())
+      .map((c) => ({ cliente: c.cliente, qtd: c.qtd, faturamento: c.faturamento, pedidos: c.pedidos.size }))
+      .sort((a, b) => b.faturamento - a.faturamento);
+  }
+
+  return {
+    porMes: Array.from(porMes.values()).sort((a, b) => a.mes.localeCompare(b.mes)),
+    clientesTodoPeriodo: finalizarClientes(porClienteTodoPeriodo),
+    clientesUltimoAno: finalizarClientes(porClienteUltimoAno),
+    clientesDistintos: porClienteTodoPeriodo.size,
+    qtdTotal: linhas.reduce((s, l) => s + l.qtd, 0),
+    faturamentoTotal: linhas.reduce((s, l) => s + l.valorTotal, 0),
+  };
 }

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarResumoProdutos, listarImportacoes } from "../lib/vendas";
+import { listarResumoProdutos, listarImportacoes, buscarDetalheProduto } from "../lib/vendas";
 import { formatCurrency } from "../lib/constants";
 import SeletorPeriodo from "../components/SeletorPeriodo";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
 } from "recharts";
+import ModalProduto from "../components/ModalProduto";
 
 function mesAtras(n) {
   const d = new Date();
@@ -36,6 +37,7 @@ export default function Produtos() {
   const [busca, setBusca] = useState("");
   const [categoriaFiltro, setCategoriaFiltro] = useState("");
   const [ordenacao, setOrdenacao] = useState("faturamento");
+  const [produtoSelecionado, setProdutoSelecionado] = useState(null);
 
   async function carregar() {
     setCarregando(true);
@@ -160,7 +162,8 @@ export default function Produtos() {
             </div>
             <div className="lista-grid">
               {listaFiltrada.slice(0, 100).map((p, i) => (
-                <div key={p.codigoProduto || p.produto} className="list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 4 }}>
+                <div key={p.codigoProduto || p.produto} className="list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 4, cursor: "pointer" }}
+                  onClick={() => setProdutoSelecionado(p)}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                     <strong style={{ fontSize: 13 }}>{i + 1}. {p.produto || "(sem nome)"}</strong>
                     <span className="badge" style={{ background: CORES_CLASSE[p.classe], color: "white", flexShrink: 0 }}>{p.classe}</span>
@@ -182,6 +185,10 @@ export default function Produtos() {
             )}
           </div>
         </>
+      )}
+
+      {produtoSelecionado && (
+        <ModalProduto produto={produtoSelecionado} onFechar={() => setProdutoSelecionado(null)} buscarDetalhe={buscarDetalheProduto} />
       )}
     </div>
   );
