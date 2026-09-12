@@ -188,7 +188,7 @@ export default function Produtos() {
       )}
 
       {produtoSelecionado && (
-        <ModalProduto produto={produtoSelecionado} onFechar={() => setProdutoSelecionado(null)} buscarDetalhe={buscarDetalheProduto} />
+        <ModalProduto produto={produtoSelecionado} onFechar={() => setProdutoSelecionado(null)} buscarDetalhe={buscarDetalheProduto} importacoes={importacoes} />
       )}
     </div>
   );

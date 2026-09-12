@@ -226,7 +226,7 @@ export default function Vendas() {
             </div>
             {importando ? (
               <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                Importando... {progresso ? `${progresso.feito} / ${progresso.total}` : ""}
+                {progresso ? `Importando... ${progresso.feito} / ${progresso.total}` : "Buscando categorias no Portal de Vendas (até 8s)..."}
               </div>
             ) : (
               <div style={{ display: "flex", gap: 8 }}>

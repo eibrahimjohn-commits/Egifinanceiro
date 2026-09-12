@@ -9,7 +9,27 @@ function formatarMes(mes) {
   return `${m}/${ano.slice(2)}`;
 }
 
-export default function ModalProduto({ produto, onFechar, buscarDetalhe }) {
+// Todos os meses entre o mais antigo e o mais novo já importados no sistema
+// (não só os que esse produto vendeu) — é o denominador certo pra "média por
+// mês incluindo os zerados". Sem isso, não dá pra distinguir "não vendeu
+// nesse mês" de "esse mês nem existe no sistema".
+function todosMesesImportados(importacoes) {
+  const meses = importacoes.flatMap((i) => i.meses || []);
+  if (meses.length === 0) return [];
+  const min = meses.reduce((a, b) => (a < b ? a : b));
+  const max = meses.reduce((a, b) => (a > b ? a : b));
+  const lista = [];
+  let [ano, mes] = min.split("-").map(Number);
+  const [anoMax, mesMax] = max.split("-").map(Number);
+  while (ano < anoMax || (ano === anoMax && mes <= mesMax)) {
+    lista.push(`${ano}-${String(mes).padStart(2, "0")}`);
+    mes++;
+    if (mes > 12) { mes = 1; ano++; }
+  }
+  return lista;
+}
+
+export default function ModalProduto({ produto, onFechar, buscarDetalhe, importacoes }) {
   const [carregando, setCarregando] = useState(true);
   const [detalhe, setDetalhe] = useState(null);
   const [aba, setAba] = useState("historico"); // historico | ultimoAno
@@ -25,6 +45,15 @@ export default function ModalProduto({ produto, onFechar, buscarDetalhe }) {
 
   const dadosGrafico = detalhe?.porMes.map((m) => ({ ...m, label: formatarMes(m.mes) })) || [];
   const listaClientes = aba === "historico" ? detalhe?.clientesTodoPeriodo : detalhe?.clientesUltimoAno;
+
+  const totalMesesPeriodo = todosMesesImportados(importacoes).length;
+  const mesesComVenda = detalhe?.porMes.length || 0;
+  const medias = detalhe && totalMesesPeriodo > 0 ? {
+    qtdComZeros: detalhe.qtdTotal / totalMesesPeriodo,
+    faturamentoComZeros: detalhe.faturamentoTotal / totalMesesPeriodo,
+    qtdSemZeros: mesesComVenda > 0 ? detalhe.qtdTotal / mesesComVenda : 0,
+    faturamentoSemZeros: mesesComVenda > 0 ? detalhe.faturamentoTotal / mesesComVenda : 0,
+  } : null;
 
   return (
     <div style={{
@@ -60,6 +89,26 @@ export default function ModalProduto({ produto, onFechar, buscarDetalhe }) {
                 <strong style={{ fontSize: 18 }}>{detalhe.clientesDistintos}</strong>
               </div>
             </div>
+
+            {medias && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 6 }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Média/mês (todos os {totalMesesPeriodo} meses)</div>
+                    <strong style={{ fontSize: 15 }}>{medias.qtdComZeros.toFixed(1)} un. · {formatCurrency(medias.faturamentoComZeros)}</strong>
+                  </div>
+                  <div title="Meses sem nenhuma venda provavelmente são meses sem estoque desse item — contá-los na média dilui o número pra baixo sem refletir a demanda real.">
+                    <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Média/mês (só os {mesesComVenda} meses com venda) <span style={{ cursor: "help" }}>ⓘ</span></div>
+                    <strong style={{ fontSize: 15, color: "var(--grape)" }}>{medias.qtdSemZeros.toFixed(1)} un. · {formatCurrency(medias.faturamentoSemZeros)}</strong>
+                  </div>
+                </div>
+                {mesesComVenda < totalMesesPeriodo && (
+                  <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>
+                    {totalMesesPeriodo - mesesComVenda} de {totalMesesPeriodo} meses sem nenhuma venda registrada.
+                  </div>
+                )}
+              </div>
+            )}
 
             <h3 style={{ fontSize: 14, marginBottom: 8 }}>Vendas mês a mês</h3>
             <div style={{ width: "100%", height: 200, marginBottom: 20 }}>

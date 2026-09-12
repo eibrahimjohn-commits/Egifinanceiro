@@ -107,9 +107,21 @@ export async function lerPlanilhaVendas(file) {
 // enriquecer cada linha com a categoria/subcategoria REAL do produto, em vez
 // de adivinhar por palavra-chave. Se o Portal não responder por qualquer
 // motivo, o import segue sem categoria — nunca trava por causa disso.
+// Timeout próprio: se o Portal não responder (rede lenta, CORS, regra de
+// segurança bloqueando sem erro claro...), essa promise nunca resolveria
+// sozinha, e o "try/catch" ali embaixo não ajuda em nada nesse caso — ele só
+// pega REJEIÇÃO, não uma promise pendurada pra sempre. Isso é o que estava
+// travando a importação inteira em "0 de X", sem erro nenhum aparecer.
+function comTimeout(promessa, ms) {
+  return Promise.race([
+    promessa,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("tempo esgotado")), ms)),
+  ]);
+}
+
 async function buscarCatalogoPortal() {
   try {
-    const snap = await getDocsFromServer(collection(dbPortal(), "products"));
+    const snap = await comTimeout(getDocsFromServer(collection(dbPortal(), "products")), 8000);
     const porCodigo = {};
     snap.docs.forEach((d) => {
       const p = d.data();
@@ -117,7 +129,7 @@ async function buscarCatalogoPortal() {
     });
     return porCodigo;
   } catch (e) {
-    console.warn("Não consegui buscar o catálogo do Portal — seguindo sem categoria.", e);
+    console.warn("Não consegui buscar o catálogo do Portal (ou demorou demais) — seguindo sem categoria.", e);
     return {};
   }
 }
