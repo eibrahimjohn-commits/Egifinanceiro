@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import {
-  collection, doc, getDocs, query, where, writeBatch, addDoc, serverTimestamp,
+  collection, doc, getDocsFromServer, query, where, writeBatch, addDoc, serverTimestamp,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { dbPortal } from "./firebasePortal";
@@ -107,7 +107,7 @@ export async function lerPlanilhaVendas(file) {
 // motivo, o import segue sem categoria — nunca trava por causa disso.
 async function buscarCatalogoPortal() {
   try {
-    const snap = await getDocs(collection(dbPortal(), "products"));
+    const snap = await getDocsFromServer(collection(dbPortal(), "products"));
     const porCodigo = {};
     snap.docs.forEach((d) => {
       const p = d.data();
@@ -166,7 +166,7 @@ export async function importarPlanilhaVendas(linhas, nomeArquivo, aoProgredir) {
 // nunca o histórico inteiro) e regrava os 3 tipos de resumo do zero — por
 // isso é seguro reimportar o mesmo período mais de uma vez, sem duplicar.
 async function recalcularResumosDoMes(mes) {
-  const snap = await getDocs(query(linhasRef, where("mes", "==", mes)));
+  const snap = await getDocsFromServer(query(linhasRef, where("mes", "==", mes)));
   const linhasDoMes = snap.docs.map((d) => d.data());
 
   const porDia = new Map();
@@ -230,7 +230,7 @@ async function recalcularResumosDoMes(mes) {
 }
 
 export async function listarImportacoes() {
-  const snap = await getDocs(importacoesRef);
+  const snap = await getDocsFromServer(importacoesRef);
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     .sort((a, b) => (b.meses?.[0] || "").localeCompare(a.meses?.[0] || ""));
@@ -238,32 +238,14 @@ export async function listarImportacoes() {
 
 // --- Leitura pros dashboards — sempre nos resumos prontos, nunca no bruto ---
 
-function mesesEntre(mesInicio, mesFim) {
-  const meses = [];
-  let [ano, mesN] = mesInicio.split("-").map(Number);
-  const [anoFim, mesFimN] = mesFim.split("-").map(Number);
-  while (ano < anoFim || (ano === anoFim && mesN <= mesFimN)) {
-    meses.push(`${ano}-${String(mesN).padStart(2, "0")}`);
-    mesN++;
-    if (mesN > 12) { mesN = 1; ano++; }
-  }
-  return meses;
-}
-
 export async function listarResumoDiario(mesInicio, mesFim) {
-  const meses = mesesEntre(mesInicio, mesFim);
-  const resultados = await Promise.all(
-    meses.map((mes) => getDocs(query(resumoDiarioRef, where("mes", "==", mes))))
-  );
-  return resultados.flatMap((snap) => snap.docs.map((d) => d.data())).sort((a, b) => a.data.localeCompare(b.data));
+  const snap = await getDocsFromServer(query(resumoDiarioRef, where("mes", ">=", mesInicio), where("mes", "<=", mesFim)));
+  return snap.docs.map((d) => d.data()).sort((a, b) => a.data.localeCompare(b.data));
 }
 
 export async function listarResumoProdutos(mesInicio, mesFim) {
-  const meses = mesesEntre(mesInicio, mesFim);
-  const resultados = await Promise.all(
-    meses.map((mes) => getDocs(query(resumoProdutoMesRef, where("mes", "==", mes))))
-  );
-  const linhas = resultados.flatMap((snap) => snap.docs.map((d) => d.data()));
+  const snap = await getDocsFromServer(query(resumoProdutoMesRef, where("mes", ">=", mesInicio), where("mes", "<=", mesFim)));
+  const linhas = snap.docs.map((d) => d.data());
 
   const agrupado = new Map();
   linhas.forEach((l) => {
@@ -277,11 +259,8 @@ export async function listarResumoProdutos(mesInicio, mesFim) {
 }
 
 export async function listarResumoClientes(mesInicio, mesFim) {
-  const meses = mesesEntre(mesInicio, mesFim);
-  const resultados = await Promise.all(
-    meses.map((mes) => getDocs(query(resumoClienteMesRef, where("mes", "==", mes))))
-  );
-  const linhas = resultados.flatMap((snap) => snap.docs.map((d) => d.data()));
+  const snap = await getDocsFromServer(query(resumoClienteMesRef, where("mes", ">=", mesInicio), where("mes", "<=", mesFim)));
+  const linhas = snap.docs.map((d) => d.data());
 
   const agrupado = new Map();
   linhas.forEach((l) => {
@@ -296,6 +275,6 @@ export async function listarResumoClientes(mesInicio, mesFim) {
 // Detalhe bruto — só usado quando a pessoa clica pra investigar um caso
 // específico (não entra nos dashboards, que sempre leem os resumos).
 export async function listarLinhasDoPedido(pedido) {
-  const snap = await getDocs(query(linhasRef, where("pedido", "==", String(pedido))));
+  const snap = await getDocsFromServer(query(linhasRef, where("pedido", "==", String(pedido))));
   return snap.docs.map((d) => d.data());
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import "../components/ui.css";
 import { listarResumoProdutos } from "../lib/vendas";
 import { formatCurrency } from "../lib/constants";
+import SeletorPeriodo from "../components/SeletorPeriodo";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
 } from "recharts";
@@ -70,18 +71,10 @@ export default function Produtos() {
 
   return (
     <div>
-      <div className="card">
-        <div className="row" style={{ alignItems: "flex-end" }}>
-          <div className="field">
-            <label>De</label>
-            <input className="input" type="month" value={mesInicio} onChange={(e) => setMesInicio(e.target.value)} />
-          </div>
-          <div className="field">
-            <label>Até</label>
-            <input className="input" type="month" value={mesFim} onChange={(e) => setMesFim(e.target.value)} />
-          </div>
-        </div>
-      </div>
+      <SeletorPeriodo
+        mesInicio={mesInicio} mesFim={mesFim}
+        onChange={(inicio, fim) => { setMesInicio(inicio); setMesFim(fim); }}
+      />
 
       {carregando ? (
         <div className="empty-state">Carregando...</div>
