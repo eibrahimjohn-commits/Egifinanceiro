@@ -6,14 +6,17 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
-      // skipWaiting + clientsClaim: assim que um novo deploy termina, a aba
-      // já aberta assume a versão nova na hora (com um reload automático),
-      // em vez de ficar presa na versão antiga em cache até fechar tudo e
-      // abrir de novo. Sem isso, uma mudança já publicada podia parecer que
-      // "não pegou" mesmo estando tudo certo no código.
+      registerType: 'prompt',
+      // 'prompt' em vez de 'autoUpdate': ainda baixa a versão nova sozinho no
+      // fundo, mas só troca de fato quando a pessoa clicar no botão de
+      // atualizar (em vez de trocar sem avisar e sem controle).
+      injectRegister: false,
+      // clientsClaim (sem skipWaiting): a versão nova fica pronta e ESPERANDO
+      // nos bastidores assim que termina de baixar — só assume o controle da
+      // aba quando a pessoa clicar no botão "Atualizar" (ver AtualizarApp.jsx).
+      // clientsClaim garante que, nesse momento, ela assume na hora, sem
+      // precisar fechar e abrir tudo de novo.
       workbox: {
-        skipWaiting: true,
         clientsClaim: true,
       },
       includeAssets: ['favicon.svg'],

@@ -138,32 +138,47 @@ async function buscarCatalogoPortal() {
 // reimportar o mesmo arquivo/período não duplica nada) e recalcula os
 // resumos SÓ dos meses tocados por essa importação — nunca varre o
 // histórico inteiro, então o custo não cresce conforme os anos acumulam.
+// Grava um array de objetos em lotes de até 450 (limite do Firestore é 500
+// por batch), disparando os commits em PARALELO em vez de um de cada vez.
+// É essa troca (série -> paralelo) que faz uma importação de dezenas de
+// milhares de linhas caber em segundos em vez de minutos — o gargalo nunca
+// foi o Firestore em si, era esperar cada lote terminar antes de começar o
+// próximo, quando eles não dependem uns dos outros.
+async function gravarEmLotesParalelo(itens, referencia, montarId, aoProgredir) {
+  const TAMANHO_LOTE = 450;
+  let feitos = 0;
+  const lotes = [];
+  for (let i = 0; i < itens.length; i += TAMANHO_LOTE) {
+    lotes.push(itens.slice(i, i + TAMANHO_LOTE));
+  }
+  await Promise.all(lotes.map(async (pedaco) => {
+    const batch = writeBatch(db);
+    pedaco.forEach((item, j) => batch.set(doc(referencia, montarId(item, j)), item));
+    await batch.commit();
+    feitos += pedaco.length;
+    aoProgredir?.(Math.min(feitos, itens.length), itens.length);
+  }));
+}
+
 export async function importarPlanilhaVendas(linhas, nomeArquivo, aoProgredir) {
   const catalogo = await buscarCatalogoPortal();
 
-  const comEnriquecimento = linhas.map((l) => ({
+  const comEnriquecimento = linhas.map((l, i) => ({
     ...l,
     categoria: catalogo[l.codigoProduto]?.categoria || "",
     subcategoria: catalogo[l.codigoProduto]?.subcategoria || "",
+    _indice: i, // usado só pra montar um ID de documento único, não é gravado como veio
   }));
 
-  // grava em lotes de 450 (limite do Firestore é 500 por batch)
-  const TAMANHO_LOTE = 450;
-  for (let i = 0; i < comEnriquecimento.length; i += TAMANHO_LOTE) {
-    const pedaco = comEnriquecimento.slice(i, i + TAMANHO_LOTE);
-    const batch = writeBatch(db);
-    pedaco.forEach((l, j) => {
-      const id = `${l.pedido}_${i + j}`;
-      batch.set(doc(linhasRef, id), l);
-    });
-    await batch.commit();
-    aoProgredir?.(Math.min(i + TAMANHO_LOTE, comEnriquecimento.length), comEnriquecimento.length);
-  }
+  await gravarEmLotesParalelo(
+    comEnriquecimento, linhasRef,
+    (l) => `${l.pedido}_${l._indice}`,
+    aoProgredir
+  );
 
   const meses = Array.from(new Set(comEnriquecimento.map((l) => l.mes))).sort();
-  for (const mes of meses) {
-    await recalcularResumosDoMes(mes);
-  }
+  // Meses diferentes não dependem um do outro — recalcula todos em paralelo.
+  await Promise.all(meses.map((mes) => recalcularResumosDoMes(mes)));
 
   await addDoc(importacoesRef, {
     nomeArquivo,
@@ -209,38 +224,21 @@ async function recalcularResumosDoMes(mes) {
     porCliente.set(l.cliente, cli);
   });
 
-  const TAMANHO_LOTE = 450;
-
   const diasArr = Array.from(porDia.values()).map((d) => ({
     data: d.data, mes: d.mes, faturamento: d.faturamento, pedidos: d.pedidosSet.size, itens: d.itens,
   }));
-  for (let i = 0; i < diasArr.length; i += TAMANHO_LOTE) {
-    const batch = writeBatch(db);
-    diasArr.slice(i, i + TAMANHO_LOTE).forEach((d) => batch.set(doc(resumoDiarioRef, d.data), d));
-    await batch.commit();
-  }
-
   const produtosArr = Array.from(porProduto.values());
-  for (let i = 0; i < produtosArr.length; i += TAMANHO_LOTE) {
-    const batch = writeBatch(db);
-    produtosArr.slice(i, i + TAMANHO_LOTE).forEach((p) => {
-      const id = `${p.codigoProduto || slug(p.produto)}_${mes}`;
-      batch.set(doc(resumoProdutoMesRef, id), p);
-    });
-    await batch.commit();
-  }
-
   const clientesArr = Array.from(porCliente.values()).map((c) => ({
     cliente: c.cliente, mes: c.mes, faturamento: c.faturamento, pedidos: c.pedidosSet.size,
   }));
-  for (let i = 0; i < clientesArr.length; i += TAMANHO_LOTE) {
-    const batch = writeBatch(db);
-    clientesArr.slice(i, i + TAMANHO_LOTE).forEach((c) => {
-      const id = `${slug(c.cliente)}_${mes}`;
-      batch.set(doc(resumoClienteMesRef, id), c);
-    });
-    await batch.commit();
-  }
+
+  // Os 3 resumos são independentes entre si — grava os 3 ao mesmo tempo em
+  // vez de um depois do outro.
+  await Promise.all([
+    gravarEmLotesParalelo(diasArr, resumoDiarioRef, (d) => d.data),
+    gravarEmLotesParalelo(produtosArr, resumoProdutoMesRef, (p) => `${p.codigoProduto || slug(p.produto)}_${mes}`),
+    gravarEmLotesParalelo(clientesArr, resumoClienteMesRef, (c) => `${slug(c.cliente)}_${mes}`),
+  ]);
 }
 
 export async function listarImportacoes() {

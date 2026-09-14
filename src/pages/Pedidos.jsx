@@ -32,6 +32,7 @@ const CLIENTE_VAZIO = {
   cidade: "",
   estado: "",
   grupo: "",
+  observacao: "",
 };
 
 function novoItem() {
@@ -126,6 +127,7 @@ export default function Pedidos() {
       cidade: c.cidade || "",
       estado: c.estado || "",
       grupo: c.grupo || "",
+      observacao: c.observacao || "",
     });
     const { numero, condicao } = parseDescontoCampos(c.descontoPadrao);
     setDescontoNumero(numero);
@@ -299,9 +301,11 @@ export default function Pedidos() {
           representante: cliente.representante,
           descontoPadrao: cliente.descontoPadrao,
           prazo: cliente.prazo,
+          prazoModelo: cliente.prazoModelo,
           cidade: cliente.cidade,
           estado: cliente.estado,
           grupo: cliente.grupo,
+          observacao: cliente.observacao,
         },
         cliente.id
       );
@@ -563,11 +567,19 @@ export default function Pedidos() {
             </select>
           </div>
         </div>
-        <div className="field">
-          <label>Grupo de cliente <span style={{ fontWeight: 400, color: "var(--ink-soft)" }}>(opcional, para juntar CNPJs do mesmo grupo)</span></label>
-          <input className="input" value={cliente.grupo}
-            onChange={(e) => atualizarCliente("grupo", e.target.value)}
-            placeholder="Ex: Rede Bijoux Ltda" />
+        <div className="row">
+          <div className="field">
+            <label>Grupo de cliente <span style={{ fontWeight: 400, color: "var(--ink-soft)" }}>(opcional, para juntar CNPJs do mesmo grupo)</span></label>
+            <input className="input" value={cliente.grupo}
+              onChange={(e) => atualizarCliente("grupo", e.target.value)}
+              placeholder="Ex: Rede Bijoux Ltda" />
+          </div>
+          <div className="field">
+            <label>Observação</label>
+            <input className="input" value={cliente.observacao}
+              onChange={(e) => atualizarCliente("observacao", e.target.value)}
+              placeholder="Anotações livres sobre esse cliente..." />
+          </div>
         </div>
         {!cliente.id && (cliente.codigo || cliente.nome) && (
           <div style={{ fontSize: 13, color: "var(--grape)", fontWeight: 600 }}>
