@@ -4,9 +4,11 @@ import {
   lerPlanilhaVendas, importarPlanilhaVendas, listarImportacoes,
   listarResumoDiario, listarResumoClientes,
 } from "../lib/vendas";
-import { formatCurrency } from "../lib/constants";
+import { formatCurrency, formatDate } from "../lib/constants";
 import SeletorPeriodo from "../components/SeletorPeriodo";
 import { granularidadeParaPeriodo, agruparPorGranularidade } from "../lib/analytics";
+import { chaveVendas, buscarGraficoSalvo, salvarGraficoSalvo, limparTodosGraficosSalvos } from "../lib/graficosSalvos";
+import GraficosSalvosLista from "../components/GraficosSalvosLista";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from "recharts";
@@ -74,6 +76,7 @@ export default function Vendas() {
   const [mesFim, setMesFim] = useState(estadoInicial.mesFim);
   const [comparacoes, setComparacoes] = useState(estadoInicial.comparacoes);
 
+  const [aba, setAba] = useState("painel"); // painel | salvos
   const [carregandoDados, setCarregandoDados] = useState(true);
   const [resumoClientes, setResumoClientes] = useState([]);
   const [seriesGrafico, setSeriesGrafico] = useState([]); // [{mesInicio, mesFim, cor, dados: [...]}]
@@ -91,8 +94,20 @@ export default function Vendas() {
   async function carregarDashboard() {
     setCarregandoDados(true);
     const granularidade = granularidadeParaPeriodo(mesInicio, mesFim);
-
     const periodos = [{ mesInicio, mesFim, cor: CORES_COMPARACAO[0], principal: true }, ...comparacoes];
+    const chave = chaveVendas(mesInicio, mesFim, comparacoes);
+
+    // Já geramos esse gráfico exato antes? Usa o que já foi calculado em vez
+    // de reler e re-somar tudo de novo — é só 1 leitura de documento.
+    const salvo = await buscarGraficoSalvo(chave);
+    if (salvo) {
+      setSeriesGrafico(periodos.map((p, i) => ({ ...p, dados: salvo.series[i]?.dados || [] })));
+      setResumoClientes(salvo.resumoClientes);
+      setKpis(salvo.kpis);
+      setCarregandoDados(false);
+      return;
+    }
+
     const [resultadosDiarios, cli] = await Promise.all([
       Promise.all(periodos.map((p) => listarResumoDiario(p.mesInicio, p.mesFim))),
       listarResumoClientes(mesInicio, mesFim),
@@ -103,14 +118,25 @@ export default function Vendas() {
       dados: agruparPorGranularidade(resultadosDiarios[i], granularidade),
     }));
 
-    setSeriesGrafico(series);
-    setResumoClientes(cli);
     const principal = resultadosDiarios[0];
-    setKpis({
+    const kpisCalculados = {
       faturamento: principal.reduce((s, d) => s + d.faturamento, 0),
       pedidos: principal.reduce((s, d) => s + d.pedidos, 0),
-    });
+    };
+
+    setSeriesGrafico(series);
+    setResumoClientes(cli);
+    setKpis(kpisCalculados);
     setCarregandoDados(false);
+
+    // Salva pra próxima vez que alguém pedir essa mesma configuração.
+    salvarGraficoSalvo(chave, {
+      tipo: "vendas",
+      mesInicio, mesFim, comparacoes,
+      series: series.map((s) => ({ mesInicio: s.mesInicio, mesFim: s.mesFim, dados: s.dados })),
+      resumoClientes: cli,
+      kpis: kpisCalculados,
+    });
   }
 
   useEffect(() => { carregarImportacoes(); }, []);
@@ -174,6 +200,7 @@ export default function Vendas() {
       const resultado = await comLimiteDeTempo(
         importarPlanilhaVendas(preview.linhas, preview.nomeArquivo, (feito, total) => setProgresso({ feito, total }))
       );
+      await limparTodosGraficosSalvos(); // os gráficos salvos podem cobrir os meses que acabaram de mudar
       mostrarToast(`Importado! ${resultado.linhasProcessadas} linhas · ${formatCurrency(resultado.faturamentoTotal)} · meses: ${resultado.meses.join(", ")}`);
       setPreview(null);
       carregarImportacoes();
@@ -184,6 +211,13 @@ export default function Vendas() {
       setImportando(false);
       setProgresso(null);
     }
+  }
+
+  function abrirGraficoSalvo(g) {
+    setMesInicio(g.mesInicio);
+    setMesFim(g.mesFim);
+    setComparacoes(g.comparacoes || []);
+    setAba("painel");
   }
 
   const ticketMedio = kpis.pedidos > 0 ? kpis.faturamento / kpis.pedidos : 0;
@@ -211,6 +245,19 @@ export default function Vendas() {
     <div>
       {toast && <div className="toast">{toast}</div>}
 
+      <div className="card" style={{ padding: 8, display: "flex", gap: 8 }}>
+        <button className={"btn " + (aba === "painel" ? "btn-primary" : "btn-ghost")} style={{ flex: 1, fontSize: 13 }} onClick={() => setAba("painel")}>
+          Painel
+        </button>
+        <button className={"btn " + (aba === "salvos" ? "btn-primary" : "btn-ghost")} style={{ flex: 1, fontSize: 13 }} onClick={() => setAba("salvos")}>
+          Gráficos salvos
+        </button>
+      </div>
+
+      {aba === "salvos" && <GraficosSalvosLista tipo="vendas" onAbrir={abrirGraficoSalvo} />}
+
+      {aba === "painel" && (
+      <>
       <div className="card">
         <h2 className="card-title">Importar histórico de vendas</h2>
         <div style={{ fontSize: 11, color: "var(--ink-soft)", marginBottom: 8 }}>versão do módulo de vendas: 2026-09-12-b</div>
@@ -358,6 +405,8 @@ export default function Vendas() {
             </div>
           </div>
         </>
+      )}
+      </>
       )}
     </div>
   );

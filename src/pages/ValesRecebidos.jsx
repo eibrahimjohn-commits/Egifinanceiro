@@ -3,6 +3,9 @@ import "../components/ui.css";
 import { listarPedidos, registrarBaixa, confirmarFormaPagamento, arquivarPedidos, marcarComoPago, editarItemPedido, excluirItemPedido, editarPagamento, excluirPagamento } from "../lib/pedidos";
 import { listarClientes } from "../lib/clientes";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
+import CampoConta from "../components/CampoConta";
+import ChequesDevolvidos from "../components/ChequesDevolvidos";
+import { listarChequesDevolvidos } from "../lib/chequesDevolvidos";
 import {
   formatCurrency, formatDate, todayISO, FORMAS_PAGAMENTO, CONTAS_PADRAO,
   pedidoEstaAtrasado, calcularPercentualAberto, tagResumoCliente, podeMoverParaRecebidos,
@@ -97,32 +100,12 @@ function contribuicao30Dias(saldo, prazoDias) {
   return saldo * fator;
 }
 
-function CampoConta({ conta, setConta, identificacao, setIdentificacao }) {
-  return (
-    <>
-      <div className="field">
-        <label>Conta</label>
-        <select className="input" value={conta} onChange={(e) => setConta(e.target.value)}>
-          <option value="">Selecione...</option>
-          {CONTAS_PADRAO.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-      </div>
-      {conta === "Terceiros" && (
-        <div className="field">
-          <label>Identificação</label>
-          <input className="input" value={identificacao} onChange={(e) => setIdentificacao(e.target.value)}
-            placeholder="Nome da pessoa/conta de terceiro" />
-        </div>
-      )}
-    </>
-  );
-}
-
 // Conteúdo expandido de um grupo — some cliente, compras, pagamentos, ações.
 // Fica DENTRO do card, sem navegar de página. Componente hoisted fora do corpo
 // da página (senão perde o foco dos campos a cada tecla).
 function DetalheExpandido({
   g,
+  clientesPorId = {}, chequesDevolvidos = [],
   pedidoBaixa, onAbrirBaixa, onCancelarBaixa, onConfirmarBaixa,
   valorBaixa, setValorBaixa, dataBaixa, setDataBaixa, formaBaixa, setFormaBaixa,
   contaBaixa, setContaBaixa, contaBaixaId, setContaBaixaId,
@@ -171,8 +154,90 @@ function DetalheExpandido({
 
   const pedidosComSaldo = somenteLeitura ? [] : g.pedidos.filter((p) => saldoDoPedido(p) > 0.01);
 
+  // Resumo do cliente/grupo — valor médio, últimas compras, observação,
+  // cheques ainda por vencer e histórico de cheques que já voltaram. Tudo
+  // calculado a partir do que já está carregado (nada de leitura extra),
+  // exceto chequesDevolvidos que vem pronto do componente pai.
+  const mediaCompra = g.pedidos.length > 0
+    ? g.pedidos.reduce((s, p) => s + valorDevidoDoPedido(p), 0) / g.pedidos.length
+    : 0;
+  const ultimasCompras = [...g.pedidos]
+    .sort((a, b) => new Date(b.data) - new Date(a.data))
+    .slice(0, 3)
+    .map((p) => ({ data: p.data, valor: valorDevidoDoPedido(p) }));
+  const observacoes = Array.from(g.clientesIds)
+    .map((id) => clientesPorId[id]?.observacao)
+    .filter(Boolean);
+  const hojeResumo = new Date();
+  const chequesEmAberto = [];
+  g.pedidos.forEach((p) => {
+    const todasParcelas = [
+      ...(p.formasPagamento || []).filter((f) => f.tipo === "cheque").flatMap((f) => f.parcelas || []),
+      ...(p.pagamentos || []).filter((pg) => pg.formaPagamento === "cheque").flatMap((pg) => pg.parcelas || []),
+    ];
+    todasParcelas.forEach((parc) => {
+      if (parc.data && new Date(parc.data + "T00:00:00") > hojeResumo) {
+        chequesEmAberto.push({ data: parc.data, valor: Number(parc.valor) || 0 });
+      }
+    });
+  });
+  const chequesDevolvidosDoCliente = chequesDevolvidos.filter((c) =>
+    g.clientesIds.has(c.clienteId) || (g.nomeGrupo && c.clienteGrupo?.trim().toLowerCase() === g.nomeGrupo.trim().toLowerCase())
+  );
+
   return (
     <div style={{ padding: "0 4px 4px" }} onClick={(e) => e.stopPropagation()}>
+      <div className="card" style={{ background: "var(--bg)" }}>
+        <h3 style={{ fontSize: 14, marginBottom: 10 }}>Resumo do cliente</h3>
+        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Valor médio das compras</div>
+            <strong style={{ fontSize: 15 }}>{formatCurrency(mediaCompra)}</strong>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Cheques que já voltaram</div>
+            <strong style={{ fontSize: 15, color: chequesDevolvidosDoCliente.length > 0 ? "var(--red)" : "var(--ink)" }}>
+              {chequesDevolvidosDoCliente.length}
+            </strong>
+          </div>
+        </div>
+
+        {ultimasCompras.length > 0 && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 4 }}>Últimas compras</div>
+            {ultimasCompras.map((c, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                <span>{formatDate(c.data)}</span>
+                <strong>{formatCurrency(c.valor)}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {chequesEmAberto.length > 0 && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 4 }}>
+              Cheques em aberto (ainda não venceram) — {formatCurrency(chequesEmAberto.reduce((s, c) => s + c.valor, 0))}
+            </div>
+            {chequesEmAberto.map((c, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                <span>Vence {formatDate(c.data)}</span>
+                <strong>{formatCurrency(c.valor)}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {observacoes.length > 0 && (
+          <div>
+            <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 4 }}>Observações</div>
+            {observacoes.map((obs, i) => (
+              <div key={i} style={{ fontSize: 13 }}>{obs}</div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {!somenteLeitura && podeMoverParaRecebidos(g.percentual) && !pedidoBaixa && (
         g.representante ? (
           <button className="btn btn-secondary btn-block" style={{ marginBottom: 12 }} onClick={() => onMoverComissoes(g)}>
@@ -555,6 +620,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   }
   const [pedidos, setPedidos] = useState([]);
   const [clientes, setClientes] = useState([]);
+  const [todosChequesDevolvidos, setTodosChequesDevolvidos] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [modalAberto, setModalAberto] = useState(null); // { clientes, grupoNome }
 
@@ -593,6 +659,9 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   }
 
   useEffect(() => { carregar(); }, []);
+  useEffect(() => {
+    listarChequesDevolvidos().then(setTodosChequesDevolvidos);
+  }, []);
 
   useEffect(() => {
     if (!alvoAbrir || pedidos.length === 0) return;
@@ -893,6 +962,9 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
         <button className={"btn " + (sub === "recebidos" ? "btn-primary" : "btn-ghost")} style={{ flex: 1, fontSize: 13 }} onClick={() => setSub("recebidos")}>
           Recebidos ({gruposRecebidos.length})
         </button>
+        <button className={"btn " + (sub === "chequesDevolvidos" ? "btn-primary" : "btn-ghost")} style={{ flex: 1, fontSize: 13 }} onClick={() => setSub("chequesDevolvidos")}>
+          Cheques Devolvidos{todosChequesDevolvidos.filter((c) => c.status === "aberto").length > 0 ? ` (${todosChequesDevolvidos.filter((c) => c.status === "aberto").length})` : ""}
+        </button>
       </div>
 
       <div className="card" style={{ padding: 12 }}>
@@ -968,6 +1040,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
                 destacado={destacados.has(g.chave)} onAlternarDestaque={alternarDestaque}>
                 <DetalheExpandido
                   g={g}
+                  clientesPorId={clientesPorId} chequesDevolvidos={todosChequesDevolvidos}
                   pedidoBaixa={pedidoBaixa} onAbrirBaixa={abrirBaixa} onCancelarBaixa={() => setPedidoBaixa(null)} onConfirmarBaixa={confirmarBaixa}
                   valorBaixa={valorBaixa} setValorBaixa={setValorBaixa} dataBaixa={dataBaixa} setDataBaixa={setDataBaixa}
                   formaBaixa={formaBaixa} setFormaBaixa={setFormaBaixa}
@@ -1035,6 +1108,10 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
             </div>
           </>
         )
+      )}
+
+      {sub === "chequesDevolvidos" && (
+        <ChequesDevolvidos clientes={clientes} pedidos={pedidos} mostrarToast={mostrarToast} />
       )}
 
       {!carregando && sub === "recebidos" && (

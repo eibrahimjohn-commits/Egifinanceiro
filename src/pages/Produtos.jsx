@@ -7,6 +7,8 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
 } from "recharts";
 import ModalProduto from "../components/ModalProduto";
+import GraficosSalvosLista from "../components/GraficosSalvosLista";
+import { chaveProdutos, buscarGraficoSalvo, salvarGraficoSalvo } from "../lib/graficosSalvos";
 
 function mesAtras(n) {
   const d = new Date();
@@ -38,9 +40,18 @@ export default function Produtos() {
   const [categoriaFiltro, setCategoriaFiltro] = useState("");
   const [ordenacao, setOrdenacao] = useState("faturamento");
   const [produtoSelecionado, setProdutoSelecionado] = useState(null);
+  const [aba, setAba] = useState("painel"); // painel | salvos
 
   async function carregar() {
     setCarregando(true);
+    const chave = chaveProdutos(mesInicio, mesFim);
+    const salvo = await buscarGraficoSalvo(chave);
+    if (salvo) {
+      setProdutos(salvo.produtos);
+      setImportacoes(await listarImportacoes());
+      setCarregando(false);
+      return;
+    }
     const [prods, imps] = await Promise.all([
       listarResumoProdutos(mesInicio, mesFim),
       listarImportacoes(),
@@ -48,6 +59,13 @@ export default function Produtos() {
     setProdutos(prods);
     setImportacoes(imps);
     setCarregando(false);
+    salvarGraficoSalvo(chave, { tipo: "produtos", mesInicio, mesFim, produtos: prods });
+  }
+
+  function abrirGraficoSalvo(g) {
+    setMesInicio(g.mesInicio);
+    setMesFim(g.mesFim);
+    setAba("painel");
   }
 
   useEffect(() => { carregar(); }, [mesInicio, mesFim]);
@@ -94,6 +112,19 @@ export default function Produtos() {
 
   return (
     <div>
+      <div className="card" style={{ padding: 8, display: "flex", gap: 8 }}>
+        <button className={"btn " + (aba === "painel" ? "btn-primary" : "btn-ghost")} style={{ flex: 1, fontSize: 13 }} onClick={() => setAba("painel")}>
+          Painel
+        </button>
+        <button className={"btn " + (aba === "salvos" ? "btn-primary" : "btn-ghost")} style={{ flex: 1, fontSize: 13 }} onClick={() => setAba("salvos")}>
+          Gráficos salvos
+        </button>
+      </div>
+
+      {aba === "salvos" && <GraficosSalvosLista tipo="produtos" onAbrir={abrirGraficoSalvo} />}
+
+      {aba === "painel" && (
+      <>
       <SeletorPeriodo
         mesInicio={mesInicio} mesFim={mesFim}
         anoMinimo={importacoes.length ? Math.min(...importacoes.flatMap((i) => i.meses || []).map((m) => Number(m.slice(0, 4)))) : undefined}
@@ -185,6 +216,8 @@ export default function Produtos() {
             )}
           </div>
         </>
+      )}
+      </>
       )}
 
       {produtoSelecionado && (
