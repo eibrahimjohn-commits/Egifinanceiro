@@ -7,7 +7,7 @@ import {
 import { formatCurrency, formatDate } from "../lib/constants";
 import SeletorPeriodo from "../components/SeletorPeriodo";
 import { granularidadeParaPeriodo, agruparPorGranularidade } from "../lib/analytics";
-import { chaveVendas, buscarGraficoSalvo, salvarGraficoSalvo, limparTodosGraficosSalvos } from "../lib/graficosSalvos";
+import { chaveVendas, buscarGraficoSalvo, salvarGraficoSalvo, graficoEstaDesatualizado } from "../lib/graficosSalvos";
 import GraficosSalvosLista from "../components/GraficosSalvosLista";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -77,7 +77,8 @@ export default function Vendas() {
   const [comparacoes, setComparacoes] = useState(estadoInicial.comparacoes);
 
   const [aba, setAba] = useState("painel"); // painel | salvos
-  const [carregandoDados, setCarregandoDados] = useState(true);
+  const [carregandoDados, setCarregandoDados] = useState(false);
+  const [graficoGerado, setGraficoGerado] = useState(false);
   const [resumoClientes, setResumoClientes] = useState([]);
   const [seriesGrafico, setSeriesGrafico] = useState([]); // [{mesInicio, mesFim, cor, dados: [...]}]
   const [kpis, setKpis] = useState({ faturamento: 0, pedidos: 0 });
@@ -93,14 +94,17 @@ export default function Vendas() {
 
   async function carregarDashboard() {
     setCarregandoDados(true);
+    setGraficoGerado(true);
     const granularidade = granularidadeParaPeriodo(mesInicio, mesFim);
     const periodos = [{ mesInicio, mesFim, cor: CORES_COMPARACAO[0], principal: true }, ...comparacoes];
     const chave = chaveVendas(mesInicio, mesFim, comparacoes);
 
-    // Já geramos esse gráfico exato antes? Usa o que já foi calculado em vez
-    // de reler e re-somar tudo de novo — é só 1 leitura de documento.
-    const salvo = await buscarGraficoSalvo(chave);
-    if (salvo) {
+    // Já geramos esse gráfico exato antes E nenhuma importação nova tocou
+    // nesse período desde então? Usa o que já foi calculado em vez de reler
+    // e re-somar tudo de novo — é só 1 leitura de documento + a lista de
+    // importações (que já é leve).
+    const [salvo, importacoesAtuais] = await Promise.all([buscarGraficoSalvo(chave), listarImportacoes()]);
+    if (salvo && !graficoEstaDesatualizado(salvo, importacoesAtuais)) {
       setSeriesGrafico(periodos.map((p, i) => ({ ...p, dados: salvo.series[i]?.dados || [] })));
       setResumoClientes(salvo.resumoClientes);
       setKpis(salvo.kpis);
@@ -140,7 +144,6 @@ export default function Vendas() {
   }
 
   useEffect(() => { carregarImportacoes(); }, []);
-  useEffect(() => { carregarDashboard(); }, [mesInicio, mesFim, comparacoes]);
   useEffect(() => {
     localStorage.setItem(CHAVE_ESTADO, JSON.stringify({ mesInicio, mesFim, comparacoes }));
   }, [mesInicio, mesFim, comparacoes]);
@@ -200,7 +203,6 @@ export default function Vendas() {
       const resultado = await comLimiteDeTempo(
         importarPlanilhaVendas(preview.linhas, preview.nomeArquivo, (feito, total) => setProgresso({ feito, total }))
       );
-      await limparTodosGraficosSalvos(); // os gráficos salvos podem cobrir os meses que acabaram de mudar
       mostrarToast(`Importado! ${resultado.linhasProcessadas} linhas · ${formatCurrency(resultado.faturamentoTotal)} · meses: ${resultado.meses.join(", ")}`);
       setPreview(null);
       carregarImportacoes();
@@ -214,9 +216,17 @@ export default function Vendas() {
   }
 
   function abrirGraficoSalvo(g) {
+    // g já tem tudo que o gráfico precisa (veio do cache) — popula direto,
+    // sem nem precisar da leitura de conferência de "1 documento".
+    const periodos = [{ mesInicio: g.mesInicio, mesFim: g.mesFim, cor: CORES_COMPARACAO[0], principal: true },
+      ...(g.comparacoes || []).map((c, i) => ({ ...c, cor: CORES_COMPARACAO[i + 1] }))];
     setMesInicio(g.mesInicio);
     setMesFim(g.mesFim);
     setComparacoes(g.comparacoes || []);
+    setSeriesGrafico(periodos.map((p, i) => ({ ...p, dados: g.series[i]?.dados || [] })));
+    setResumoClientes(g.resumoClientes || []);
+    setKpis(g.kpis || { faturamento: 0, pedidos: 0 });
+    setGraficoGerado(true);
     setAba("painel");
   }
 
@@ -316,7 +326,13 @@ export default function Vendas() {
         onChange={(inicio, fim) => { setMesInicio(inicio); setMesFim(fim); }}
       />
 
-      {carregandoDados ? (
+      <button className="btn btn-primary btn-block" style={{ marginBottom: 12 }} onClick={carregarDashboard} disabled={carregandoDados}>
+        {carregandoDados ? "Gerando..." : graficoGerado ? "🔄 Atualizar gráfico" : "📊 Gerar gráfico"}
+      </button>
+
+      {!graficoGerado ? (
+        <div className="empty-state">Escolha o período (e comparações, se quiser) acima e clique em "Gerar gráfico".</div>
+      ) : carregandoDados ? (
         <div className="empty-state">Carregando...</div>
       ) : seriesGrafico[0]?.dados.length === 0 ? (
         <div className="empty-state">Nenhuma venda importada nesse período ainda.</div>

@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import "../components/ui.css";
 import { buscarCliente, salvarCliente, consultarCnpj, gerarCodigoUnico } from "../lib/clientes";
 import { criarPedido, buscarPendenciasCliente } from "../lib/pedidos";
+import { listarChequesDevolvidos } from "../lib/chequesDevolvidos";
 import {
   FORMAS_PAGAMENTO,
   FORMAS_RECEBIMENTO_IMEDIATO,
@@ -59,6 +60,7 @@ export default function Pedidos() {
   const [salvando, setSalvando] = useState(false);
   const [toast, setToast] = useState("");
   const [aviso, setAviso] = useState(null); // { valesAbertos, chequesACair, nomeCliente }
+  const [resumoCliente, setResumoCliente] = useState(null); // { mediaCompra, ultimasCompras, chequesDevolvidos }
 
   function mostrarToast(msg) {
     setToast(msg);
@@ -139,10 +141,18 @@ export default function Pedidos() {
 
   async function verificarPendencias(c) {
     try {
-      const { valesAbertos, chequesACair } = await buscarPendenciasCliente({ clienteId: c.id, grupo: c.grupo });
+      const [{ valesAbertos, chequesACair, mediaCompra, ultimasCompras }, todosChequesDevolvidos] = await Promise.all([
+        buscarPendenciasCliente({ clienteId: c.id, grupo: c.grupo }),
+        listarChequesDevolvidos(),
+      ]);
       if (valesAbertos.length > 0 || chequesACair.length > 0) {
         setAviso({ valesAbertos, chequesACair, nomeCliente: c.nome });
       }
+      const grupoNorm = (c.grupo || "").trim().toLowerCase();
+      const chequesDevolvidosDoCliente = todosChequesDevolvidos.filter((ch) =>
+        ch.clienteId === c.id || (grupoNorm && ch.clienteGrupo?.trim().toLowerCase() === grupoNorm)
+      );
+      setResumoCliente({ mediaCompra, ultimasCompras, chequesDevolvidos: chequesDevolvidosDoCliente.length, observacao: c.observacao || "" });
     } catch {
       // se falhar a checagem, não trava o lançamento do pedido
     }
@@ -178,6 +188,20 @@ export default function Pedidos() {
     setSugestoesNome([]);
     setItens([novoItem()]);
     setFormas([novaForma()]);
+    setAviso(null);
+    setResumoCliente(null);
+  }
+
+  // Só limpa o bloco Cliente — pra quando a pessoa selecionou/digitou o
+  // cliente errado e quer trocar, sem perder o que já preencheu no pedido.
+  function limparCliente() {
+    setCliente(CLIENTE_VAZIO);
+    setDescontoNumero("");
+    setDescontoCondicao("avista");
+    setMatches([]);
+    setSugestoesNome([]);
+    setAviso(null);
+    setResumoCliente(null);
   }
 
   function addItem() {
@@ -433,7 +457,14 @@ export default function Pedidos() {
       <div className="pedidos-grid">
       {/* BLOCO 1: CLIENTE */}
       <div className="card">
-        <h2 className="card-title">Cliente</h2>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h2 className="card-title" style={{ marginBottom: 0 }}>Cliente</h2>
+          {(cliente.id || cliente.codigo || cliente.nome) && (
+            <button type="button" className="btn btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }} onClick={limparCliente}>
+              Limpar dados
+            </button>
+          )}
+        </div>
         <div className="row">
           <div className="field">
             <label>Código</label>
@@ -587,6 +618,41 @@ export default function Pedidos() {
           </div>
         )}
       </div>
+
+      {resumoCliente && cliente.id && (
+        <div className="card" style={{ background: "var(--bg)" }}>
+          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Resumo do cliente</h3>
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Valor médio das compras</div>
+              <strong style={{ fontSize: 15 }}>{formatCurrency(resumoCliente.mediaCompra)}</strong>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Cheques que já voltaram</div>
+              <strong style={{ fontSize: 15, color: resumoCliente.chequesDevolvidos > 0 ? "var(--red)" : "var(--ink)" }}>
+                {resumoCliente.chequesDevolvidos}
+              </strong>
+            </div>
+          </div>
+          {resumoCliente.ultimasCompras.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 4 }}>Últimas compras</div>
+              {resumoCliente.ultimasCompras.map((c, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                  <span>{formatDate(c.data)}</span>
+                  <strong>{formatCurrency(c.valor)}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+          {resumoCliente.observacao && (
+            <div>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 4 }}>Observação</div>
+              <div style={{ fontSize: 13 }}>{resumoCliente.observacao}</div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* BLOCO 2: PEDIDO */}
       <div className="card">

@@ -50,3 +50,23 @@ export async function limparTodosGraficosSalvos() {
   const snap = await getDocs(ref);
   await Promise.all(snap.docs.map((d) => deleteDoc(doc(ref, d.id))));
 }
+
+function mesEstaNoPeriodo(mesInicio, mesFim, mes) {
+  return mes >= mesInicio && mes <= mesFim;
+}
+
+// Em vez de jogar fora o cache inteiro a cada importação, cada gráfico só é
+// considerado velho se alguma importação que tocou um mês DENTRO do período
+// dele (principal ou de alguma comparação) aconteceu DEPOIS dele ter sido
+// salvo. `importacoes` é a lista que a tela já carrega normalmente — não
+// gera leitura extra nenhuma pra fazer essa checagem.
+export function graficoEstaDesatualizado(grafico, importacoes) {
+  const cacheTime = grafico.atualizadoEm?.seconds;
+  if (!cacheTime) return true;
+  const periodos = [{ mesInicio: grafico.mesInicio, mesFim: grafico.mesFim }, ...(grafico.comparacoes || [])];
+  return importacoes.some((imp) => {
+    const impTime = imp.createdAt?.seconds;
+    if (!impTime || impTime <= cacheTime) return false;
+    return (imp.meses || []).some((mes) => periodos.some((p) => mesEstaNoPeriodo(p.mesInicio, p.mesFim, mes)));
+  });
+}

@@ -8,7 +8,7 @@ import {
 } from "recharts";
 import ModalProduto from "../components/ModalProduto";
 import GraficosSalvosLista from "../components/GraficosSalvosLista";
-import { chaveProdutos, buscarGraficoSalvo, salvarGraficoSalvo } from "../lib/graficosSalvos";
+import { chaveProdutos, buscarGraficoSalvo, salvarGraficoSalvo, graficoEstaDesatualizado } from "../lib/graficosSalvos";
 
 function mesAtras(n) {
   const d = new Date();
@@ -34,7 +34,8 @@ export default function Produtos() {
   const [mesInicio, setMesInicio] = useState(estadoInicial.mesInicio);
   const [mesFim, setMesFim] = useState(estadoInicial.mesFim);
   const [importacoes, setImportacoes] = useState([]);
-  const [carregando, setCarregando] = useState(true);
+  const [carregando, setCarregando] = useState(false);
+  const [graficoGerado, setGraficoGerado] = useState(false);
   const [produtos, setProdutos] = useState([]);
   const [busca, setBusca] = useState("");
   const [categoriaFiltro, setCategoriaFiltro] = useState("");
@@ -44,31 +45,30 @@ export default function Produtos() {
 
   async function carregar() {
     setCarregando(true);
+    setGraficoGerado(true);
     const chave = chaveProdutos(mesInicio, mesFim);
-    const salvo = await buscarGraficoSalvo(chave);
-    if (salvo) {
+    const [salvo, imps] = await Promise.all([buscarGraficoSalvo(chave), listarImportacoes()]);
+    setImportacoes(imps);
+    if (salvo && !graficoEstaDesatualizado(salvo, imps)) {
       setProdutos(salvo.produtos);
-      setImportacoes(await listarImportacoes());
       setCarregando(false);
       return;
     }
-    const [prods, imps] = await Promise.all([
-      listarResumoProdutos(mesInicio, mesFim),
-      listarImportacoes(),
-    ]);
+    const prods = await listarResumoProdutos(mesInicio, mesFim);
     setProdutos(prods);
-    setImportacoes(imps);
     setCarregando(false);
     salvarGraficoSalvo(chave, { tipo: "produtos", mesInicio, mesFim, produtos: prods });
   }
 
   function abrirGraficoSalvo(g) {
+    // g já vem com os produtos prontos do cache — não precisa reler nada.
     setMesInicio(g.mesInicio);
     setMesFim(g.mesFim);
+    setProdutos(g.produtos || []);
+    setGraficoGerado(true);
     setAba("painel");
   }
 
-  useEffect(() => { carregar(); }, [mesInicio, mesFim]);
   useEffect(() => {
     localStorage.setItem(CHAVE_ESTADO, JSON.stringify({ mesInicio, mesFim }));
   }, [mesInicio, mesFim]);
@@ -131,7 +131,13 @@ export default function Produtos() {
         onChange={(inicio, fim) => { setMesInicio(inicio); setMesFim(fim); }}
       />
 
-      {carregando ? (
+      <button className="btn btn-primary btn-block" style={{ marginBottom: 12 }} onClick={carregar} disabled={carregando}>
+        {carregando ? "Gerando..." : graficoGerado ? "🔄 Atualizar" : "📊 Gerar gráfico"}
+      </button>
+
+      {!graficoGerado ? (
+        <div className="empty-state">Escolha o período acima e clique em "Gerar gráfico".</div>
+      ) : carregando ? (
         <div className="empty-state">Carregando...</div>
       ) : produtos.length === 0 ? (
         <div className="empty-state">Nenhuma venda importada nesse período ainda. Importe pela aba Vendas.</div>

@@ -64,11 +64,13 @@ export async function listarPedidos() {
 export async function buscarPendenciasCliente({ clienteId, grupo }) {
   const todos = await listarPedidos();
   const grupoNorm = (grupo || "").trim().toLowerCase();
-  const doCliente = todos.filter((p) => {
-    if (p.arquivado) return false;
-    if (grupoNorm) return (p.clienteGrupo || "").trim().toLowerCase() === grupoNorm;
-    return p.clienteId === clienteId;
-  });
+  const pertenceAoCliente = (p) =>
+    grupoNorm ? (p.clienteGrupo || "").trim().toLowerCase() === grupoNorm : p.clienteId === clienteId;
+
+  const doCliente = todos.filter((p) => !p.arquivado && pertenceAoCliente(p));
+  // Pra média/últimas compras usamos TODOS os pedidos do cliente (inclusive já
+  // arquivados/pagos) — isso é histórico de compra, não saldo pendente.
+  const todosDoCliente = todos.filter(pertenceAoCliente);
 
   const valesAbertos = doCliente
     .filter((p) => p.status === "aberto")
@@ -85,7 +87,15 @@ export async function buscarPendenciasCliente({ clienteId, grupo }) {
       .flatMap((f) => (f.parcelas || []).filter((parc) => parc.data >= hoje).map((parc) => ({ ...parc, pedidoData: p.data })))
   );
 
-  return { valesAbertos, chequesACair };
+  const mediaCompra = todosDoCliente.length > 0
+    ? todosDoCliente.reduce((s, p) => s + valorDevidoDoPedido(p), 0) / todosDoCliente.length
+    : 0;
+  const ultimasCompras = [...todosDoCliente]
+    .sort((a, b) => new Date(b.data) - new Date(a.data))
+    .slice(0, 3)
+    .map((p) => ({ data: p.data, valor: valorDevidoDoPedido(p) }));
+
+  return { valesAbertos, chequesACair, mediaCompra, ultimasCompras };
 }
 
 // Confirma uma forma de pagamento específica (PIX/TED ou Depósito) dentro de um pedido:
