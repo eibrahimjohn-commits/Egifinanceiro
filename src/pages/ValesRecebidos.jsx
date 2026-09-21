@@ -4,19 +4,20 @@ import { listarPedidos, registrarBaixa, confirmarFormaPagamento, arquivarPedidos
 import { listarClientes } from "../lib/clientes";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 import CampoConta from "../components/CampoConta";
-import ChequesDevolvidos from "../components/ChequesDevolvidos";
+import ChequesDevolvidos, { DetalheChequeDevolvido } from "../components/ChequesDevolvidos";
 import { listarChequesDevolvidos } from "../lib/chequesDevolvidos";
 import {
   formatCurrency, formatDate, todayISO, FORMAS_PAGAMENTO, CONTAS_PADRAO,
   pedidoEstaAtrasado, calcularPercentualAberto, tagResumoCliente, podeMoverParaRecebidos,
-  calcularParcelasCheque, valorDevidoDoPedido, valorPagoDoPedido, saldoDoPedido,
-  parseDescontoPercent,
+  calcularParcelasCheque, prazoPadraoUltimoCheque, redistribuirDatasCheque, valorDevidoDoPedido, valorPagoDoPedido, saldoDoPedido,
+  parseDescontoPercent, FORMAS_RECEBIMENTO_IMEDIATO,
 } from "../lib/constants";
 
 const FORMAS_COM_CONTA = ["pix_ted", "deposito"];
 const FORMAS_COM_CONFIRMAR = ["pix_ted", "deposito"];
 
 function labelForma(tipo) {
+  if (tipo === "legado") return "Legado";
   return FORMAS_PAGAMENTO.find((f) => f.value === tipo)?.label || tipo;
 }
 
@@ -139,18 +140,34 @@ function DetalheExpandido({
     }, 0);
   }, 0);
   const compraseDivergemDoOficial = Math.abs(somaComprasListadas - g.totalDevido) > 0.5;
-  const somaPagamentosListados = historico.reduce((s, pg) => s + (Number(pg.valor) || 0), 0);
+
+  // Pagamentos: TUDO que o cliente pagou, de qualquer forma, numa lista só —
+  // baixas registradas depois (editáveis) + o que foi recebido na hora da
+  // venda (dinheiro, cheque, conta de 3º) + PIX/depósito ainda aguardando
+  // confirmação (aparece, mas não soma no total). Formas "legado" e PIX já
+  // confirmado ficam de fora do lado da venda porque já existem em
+  // "pagamentos" — mostrar os dois duplicava.
+  const pagamentosLista = [
+    ...historico.map((pg) => ({
+      origem: "baixa", data: pg.data, tipo: pg.formaPagamento, valor: Number(pg.valor) || 0,
+      conta: pg.conta, descricao: pg.descricao, parcelas: pg.parcelas,
+      pedido: pg.pedido, pagamentoIndex: pg.pagamentoIndex, original: pg,
+    })),
+    ...g.pedidos.flatMap((p) => (p.formasPagamento || []).map((f, formaIndex) => ({ f, formaIndex, p })))
+      .filter(({ f }) => FORMAS_RECEBIMENTO_IMEDIATO.includes(f.tipo) || (FORMAS_COM_CONFIRMAR.includes(f.tipo) && !f.confirmado))
+      .map(({ f, formaIndex, p }) => ({
+        origem: "venda", data: p.data, tipo: f.tipo, valor: Number(f.valor) || 0,
+        conta: f.conta, descricao: f.descricao, parcelas: f.parcelas,
+        pendente: FORMAS_COM_CONFIRMAR.includes(f.tipo) && !f.confirmado,
+        pedido: p, formaIndex,
+      })),
+  ].sort((a, b) => new Date(b.data) - new Date(a.data));
+  const somaPagamentosListados = pagamentosLista.filter((pg) => !pg.pendente).reduce((s, pg) => s + pg.valor, 0);
   const pagamentosDivergemDoOficial = Math.abs(somaPagamentosListados - g.totalPago) > 0.5;
 
-  // O que foi recebido JÁ NA VENDA (dinheiro/cheque/conta de 3º na hora do
-  // pedido) nunca aparecia em lugar nenhum — só "Pagamentos" (baixas feitas
-  // depois) e "Compras" (o que foi vendido). Por isso um pedido pago à vista
-  // parecia "sem nenhum pagamento registrado" mesmo estando 100% quitado.
-  const recebidoNaVenda = g.pedidos
-    .flatMap((p) => (p.formasPagamento || [])
-      .filter((f) => f.tipo !== "vale")
-      .map((f) => ({ ...f, pedidoData: p.data })))
-    .sort((a, b) => new Date(b.pedidoData) - new Date(a.pedidoData));
+  const edicoes = g.pedidos
+    .flatMap((p) => p.historicoEdicoes || [])
+    .sort((a, b) => new Date(b.data) - new Date(a.data));
 
   const pedidosComSaldo = somenteLeitura ? [] : g.pedidos.filter((p) => saldoDoPedido(p) > 0.01);
 
@@ -291,12 +308,9 @@ function DetalheExpandido({
             <select className="input" value={formaBaixa} onChange={(e) => {
               const novoTipo = e.target.value;
               setFormaBaixa(novoTipo);
-              // Sugere prazo padrão de 30 dias ao trocar pra cheque, em vez de
-              // deixar o campo vazio esperando preenchimento manual.
+              // Sugere o prazo padrão (30 dias por folha) ao trocar pra cheque.
               if (novoTipo === "cheque" && !prazoUltimoChequeBaixa) {
-                const daqui30 = new Date();
-                daqui30.setDate(daqui30.getDate() + 30);
-                setPrazoUltimoChequeBaixa(daqui30.toISOString().slice(0, 10));
+                setPrazoUltimoChequeBaixa(prazoPadraoUltimoCheque(numFolhasBaixa));
               }
             }}>
               {FORMAS_PAGAMENTO.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
@@ -318,12 +332,17 @@ function DetalheExpandido({
                 <div className="field">
                   <label>Número de folhas</label>
                   <input className="input" type="number" min="1" value={numFolhasBaixa}
-                    onChange={(e) => { setNumFolhasBaixa(e.target.value); onRecalcularParcelasBaixa(); }} />
+                    onChange={(e) => { setNumFolhasBaixa(e.target.value); setPrazoUltimoChequeBaixa(prazoPadraoUltimoCheque(e.target.value)); onRecalcularParcelasBaixa(); }} />
                 </div>
                 <div className="field">
                   <label>Prazo do último cheque</label>
                   <input className="input" type="date" value={prazoUltimoChequeBaixa}
-                    onChange={(e) => { setPrazoUltimoChequeBaixa(e.target.value); onRecalcularParcelasBaixa(); }} />
+                    onChange={(e) => {
+                      // Com folhas já ajustadas, mudar o prazo só move a última e
+                      // redistribui as do meio (preserva a data da primeira).
+                      if (parcelasBaixaManual) onEditarParcelaBaixa(parcelasBaixaManual.length - 1, "data", e.target.value);
+                      else setPrazoUltimoChequeBaixa(e.target.value);
+                    }} />
                 </div>
               </div>
               {valorBaixa && prazoUltimoChequeBaixa && Number(numFolhasBaixa) > 0 && (
@@ -417,72 +436,12 @@ function DetalheExpandido({
         )}
       </div>
 
-      {g.pedidos.some((p) => p.historicoEdicoes?.length > 0) && (
-        <div className="card" style={{ background: "var(--bg)" }}>
-          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Histórico de edições</h3>
-          {g.pedidos.flatMap((p) =>
-            (p.historicoEdicoes || []).map((ed, i) => (
-              <div key={p.id + "_ed_" + i} style={{ fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span>Compra de {formatDate(ed.dataItem)}</span>
-                  <span>{formatDate(ed.data.slice(0, 10))}</span>
-                </div>
-                <div style={{ color: "var(--ink-soft)" }}>
-                  {formatCurrency(ed.valorAnterior)} → <strong style={{ color: "var(--ink)" }}>{formatCurrency(ed.valorNovo)}</strong>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {g.pedidos.some((p) =>
-        p.formasPagamento?.some((f) => f.tipo === "cheque") || p.pagamentos?.some((pg) => pg.formaPagamento === "cheque" && pg.parcelas)
-      ) && (
-        <div className="card" style={{ background: "var(--bg)" }}>
-          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Cheques</h3>
-          {g.pedidos.flatMap((p) => [
-            ...(p.formasPagamento?.filter((f) => f.tipo === "cheque").flatMap((f, fi) =>
-              (f.parcelas || []).map((parc) => (
-                <div key={p.id + "_ch_" + fi + "_" + parc.numero} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-                  <span>N°{parc.numero} — {formatDate(parc.data)}</span>
-                  <strong>{formatCurrency(parc.valor)}</strong>
-                </div>
-              ))
-            ) || []),
-            ...(p.pagamentos?.filter((pg) => pg.formaPagamento === "cheque" && pg.parcelas).flatMap((pg, pgi) =>
-              (pg.parcelas || []).map((parc) => (
-                <div key={p.id + "_bx_" + pgi + "_" + parc.numero} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-                  <span>N°{parc.numero} (pagamento) — {formatDate(parc.data)}</span>
-                  <strong>{formatCurrency(parc.valor)}</strong>
-                </div>
-              ))
-            ) || []),
-          ])}
-        </div>
-      )}
-
-      {recebidoNaVenda.length > 0 && (
-        <div className="card" style={{ background: "var(--bg)" }}>
-          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Recebido na venda</h3>
-          {recebidoNaVenda.map((f, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-              <span>
-                {formatDate(f.pedidoData)} · {labelForma(f.tipo)}
-                {f.tipo === "conta_terceiros" && f.descricao ? ` (${f.descricao})` : ""}
-                {FORMAS_COM_CONFIRMAR.includes(f.tipo) && !f.confirmado ? " — aguardando confirmação" : ""}
-              </span>
-              <strong>{formatCurrency(f.valor)}</strong>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {historico.length > 0 && (
+      {pagamentosLista.length > 0 && (
         <div className="card" style={{ background: "var(--bg)" }}>
           <h3 style={{ fontSize: 14, marginBottom: 10 }}>Pagamentos</h3>
-          {historico.map((pg, i) => {
-            const editandoEsse = editandoPagamento?.pedido.id === pg.pedido.id && editandoPagamento?.pagamentoIndex === pg.pagamentoIndex;
+          {pagamentosLista.map((pg, i) => {
+            const editandoEsse = pg.origem === "baixa" && editandoPagamento?.pedido.id === pg.pedido.id && editandoPagamento?.pagamentoIndex === pg.pagamentoIndex;
+            const confirmandoEsse = pg.pendente && confirmando?.pedido.id === pg.pedido.id && confirmando?.formaIndex === pg.formaIndex;
             return (
               <div key={i} style={{ padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
                 {editandoEsse ? (
@@ -500,22 +459,53 @@ function DetalheExpandido({
                       onClick={() => onExcluirPagamento(pg.pedido, pg.pagamentoIndex)}>🗑</button>
                   </div>
                 ) : (
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
-                    <span>{formatDate(pg.data)} · {labelForma(pg.formaPagamento)}{pg.conta ? ` (${pg.conta})` : ""}</span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <strong>{formatCurrency(pg.valor)}</strong>
-                      {!somenteLeitura && (
-                        <button type="button" className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }}
-                          onClick={() => onAbrirEdicaoPagamento(pg.pedido, pg.pagamentoIndex, pg)} title="Editar">✎</button>
-                      )}
-                    </span>
-                  </div>
+                  <>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, gap: 8 }}>
+                      <span>
+                        {formatDate(pg.data)} · <strong>{labelForma(pg.tipo)}</strong>
+                        {pg.descricao ? ` (${pg.descricao})` : ""}
+                        {pg.conta ? ` · ${pg.conta}` : ""}
+                        {pg.origem === "venda" && <span style={{ color: "var(--ink-soft)" }}> · na venda</span>}
+                        {pg.pendente && <span style={{ color: "#9a6b00" }}> · aguardando confirmação</span>}
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                        <strong style={pg.pendente ? { color: "var(--ink-soft)" } : undefined}>{formatCurrency(pg.valor)}</strong>
+                        {!somenteLeitura && pg.origem === "baixa" && (
+                          <button type="button" className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }}
+                            onClick={() => onAbrirEdicaoPagamento(pg.pedido, pg.pagamentoIndex, pg.original)} title="Editar">✎</button>
+                        )}
+                        {!somenteLeitura && pg.pendente && !confirmandoEsse && (
+                          <button type="button" className="btn btn-secondary" style={{ padding: "4px 10px", fontSize: 12 }}
+                            onClick={() => onAbrirConfirmar(pg.pedido, pg.formaIndex)}>Confirmar</button>
+                        )}
+                      </span>
+                    </div>
+                    {pg.parcelas?.length > 0 && (
+                      <div style={{ paddingLeft: 12, marginTop: 2 }}>
+                        {pg.parcelas.map((parc) => (
+                          <div key={parc.numero} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--ink-soft)" }}>
+                            <span>Folha N°{parc.numero} — {formatDate(parc.data)}</span>
+                            <span>{formatCurrency(parc.valor)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {confirmandoEsse && (
+                      <div style={{ background: "white", borderRadius: 10, padding: 10, marginTop: 6 }}>
+                        <CampoConta conta={contaConfirmar} setConta={setContaConfirmar} identificacao={contaConfirmarId} setIdentificacao={setContaConfirmarId} />
+                        <div className="row" style={{ margin: 0 }}>
+                          <button type="button" className="btn btn-ghost btn-block" style={{ padding: "6px 10px", fontSize: 13 }} onClick={onCancelarConfirmar}>Cancelar</button>
+                          <button type="button" className="btn btn-primary btn-block" style={{ padding: "6px 10px", fontSize: 13 }} onClick={onConfirmarPixDeposito}>Confirmar recebimento</button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             );
           })}
           <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, fontSize: 13 }}>
-            <strong>Total</strong>
+            <strong>Total recebido</strong>
             <strong>{formatCurrency(somaPagamentosListados)}</strong>
           </div>
           {pagamentosDivergemDoOficial && (
@@ -527,37 +517,27 @@ function DetalheExpandido({
         </div>
       )}
 
-      {!somenteLeitura && g.pedidos.some((p) => p.formasPagamento?.some((f) => FORMAS_COM_CONFIRMAR.includes(f.tipo) && !f.confirmado)) && (
+      {edicoes.length > 0 && (
         <div className="card" style={{ background: "var(--bg)" }}>
-          <h3 style={{ fontSize: 14, marginBottom: 10 }}>PIX/Depósito pendentes de confirmação</h3>
-          {g.pedidos.map((p) =>
-            (p.formasPagamento || []).map((f, i) => {
-              if (!FORMAS_COM_CONFIRMAR.includes(f.tipo) || f.confirmado) return null;
-              return (
-                <div key={p.id + "_f" + i} style={{ marginBottom: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
-                    <span>{labelForma(f.tipo)} · {formatDate(p.data)}</span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <strong>{formatCurrency(f.valor)}</strong>
-                      <button type="button" className="btn btn-secondary" style={{ padding: "4px 10px", fontSize: 12 }}
-                        onClick={() => onAbrirConfirmar(p, i)}>
-                        Confirmar
-                      </button>
-                    </div>
-                  </div>
-                  {confirmando?.pedido.id === p.id && confirmando?.formaIndex === i && (
-                    <div style={{ background: "white", borderRadius: 10, padding: 10, marginTop: 6 }}>
-                      <CampoConta conta={contaConfirmar} setConta={setContaConfirmar} identificacao={contaConfirmarId} setIdentificacao={setContaConfirmarId} />
-                      <div className="row" style={{ margin: 0 }}>
-                        <button type="button" className="btn btn-ghost btn-block" style={{ padding: "6px 10px", fontSize: 13 }} onClick={onCancelarConfirmar}>Cancelar</button>
-                        <button type="button" className="btn btn-primary btn-block" style={{ padding: "6px 10px", fontSize: 13 }} onClick={onConfirmarPixDeposito}>Confirmar recebimento</button>
-                      </div>
-                    </div>
-                  )}
+          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Histórico de edições</h3>
+          {edicoes.map((ed, i) => {
+            const ehPagamento = ed.tipo === "edicao_pagamento" || ed.tipo === "exclusao_pagamento";
+            const ehExclusao = ed.tipo === "exclusao_item" || ed.tipo === "exclusao_pagamento";
+            const dataRef = ehPagamento ? ed.dataPagamento : ed.dataItem;
+            return (
+              <div key={i} style={{ fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span>{ehPagamento ? "Pagamento" : "Compra"} de {formatDate(dataRef)}{ehExclusao ? " — excluído" : ""}</span>
+                  <span>{formatDate(ed.data.slice(0, 10))}</span>
                 </div>
-              );
-            })
-          )}
+                <div style={{ color: "var(--ink-soft)" }}>
+                  {ehExclusao
+                    ? <>{formatCurrency(ed.valorAnterior)} removido</>
+                    : <>{formatCurrency(ed.valorAnterior)} → <strong style={{ color: "var(--ink)" }}>{formatCurrency(ed.valorNovo)}</strong></>}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -582,6 +562,34 @@ function CardGrupo({ g, expandido, onToggle, onAbrirGrupo, destacado, onAlternar
         </div>
       </div>
       {expandido && children}
+    </div>
+  );
+}
+
+// Cheque devolvido em aberto exibido junto dos vales — mesmo formato do
+// CardGrupo (clica pra expandir), mas com a tag roxa "Cheque dev.".
+function CardChequeDevVale({ item, expandido, onToggle, destacado, onAlternarDestaque, onAtualizado, mostrarToast }) {
+  const c = item.cheque;
+  return (
+    <div className="card" style={{ padding: 14, background: destacado ? "var(--yellow-light)" : "var(--card)" }}
+      onContextMenu={(e) => { e.preventDefault(); onAlternarDestaque?.(item.chave); }}>
+      <div style={{ display: "flex", justifyContent: "space-between", cursor: "pointer" }} onClick={() => onToggle(item.chave)}>
+        <div>
+          <strong>{item.nome} - {formatCurrency(item.saldo)}</strong>
+          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 2 }}>
+            {[item.representante, formatDate(c.dataRegistro), `${item.percentual.toFixed(1)}%`].filter(Boolean).join(" - ")}
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+          <span className="badge badge-chequedev">Cheque dev.</span>
+          <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{expandido ? "▲" : "▼"}</span>
+        </div>
+      </div>
+      {expandido && (
+        <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+          <DetalheChequeDevolvido cheque={c} onAtualizado={onAtualizado} mostrarToast={mostrarToast} />
+        </div>
+      )}
     </div>
   );
 }
@@ -659,9 +667,10 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   }
 
   useEffect(() => { carregar(); }, []);
-  useEffect(() => {
-    listarChequesDevolvidos().then(setTodosChequesDevolvidos);
-  }, []);
+  function recarregarChequesDevolvidos() {
+    return listarChequesDevolvidos().then(setTodosChequesDevolvidos);
+  }
+  useEffect(() => { recarregarChequesDevolvidos(); }, []);
 
   useEffect(() => {
     if (!alvoAbrir || pedidos.length === 0) return;
@@ -755,6 +764,32 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     (g) => g.percentual,
     (g) => g.representante
   );
+  // Cheques devolvidos em aberto entram na lista de Vales (tag roxa), com a
+  // mesma busca e ordenação dos grupos. Não entram nos totais do topo.
+  const chequesDevVales = todosChequesDevolvidos
+    .filter((c) => c.status === "aberto")
+    .map((c) => {
+      const cad = clientesPorId[c.clienteId];
+      const grupo = (cad?.grupo ?? c.clienteGrupo ?? "").trim();
+      const saldo = (Number(c.valorCheque) || 0) - (Number(c.valorPago) || 0);
+      return {
+        ehChequeDev: true,
+        chave: `chdev_${c.id}`,
+        cheque: c,
+        nome: grupo || cad?.nome || c.clienteNome,
+        representante: cad?.representante || c.clienteRepresentante || "",
+        saldo,
+        percentual: calcularPercentualAberto(saldo, Number(c.valorCheque) || 0),
+      };
+    });
+  const itensVales = aplicarFiltroOrdenacao(
+    [...agruparPorCliente(pedidosVales, clientesPorId), ...chequesDevVales],
+    (x) => (x.ehChequeDev ? (x.representante ? `${x.nome} (${x.representante})` : x.nome) : nomeExibicao(x)),
+    (x) => (x.ehChequeDev ? x.cheque.dataRegistro : x.dataMaisRecente),
+    (x) => x.saldo,
+    (x) => x.percentual,
+    (x) => x.representante
+  );
   const gruposRecebidos = aplicarFiltroOrdenacao(
     agruparPorCliente(pedidosRecebidos, clientesPorId),
     (g) => nomeExibicao(g),
@@ -792,21 +827,12 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
 
   function editarParcelaBaixa(index, campo, valor) {
     const base = parcelasDaBaixa();
-    let novas;
-    if (index === 0 && campo === "data" && base.length > 1) {
-      const deltaDias = Math.round(
-        (new Date(valor + "T00:00:00") - new Date(base[0].data + "T00:00:00")) / 86400000
-      );
-      novas = base.map((p, i) => {
-        if (i === 0) return { ...p, data: valor };
-        const d = new Date(p.data + "T00:00:00");
-        d.setDate(d.getDate() + deltaDias);
-        return { ...p, data: d.toISOString().slice(0, 10) };
-      });
-    } else {
-      novas = base.map((p, i) => (i === index ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p));
-    }
+    const novas = campo === "data"
+      ? redistribuirDatasCheque(base, index, valor)
+      : base.map((p, i) => (i === index ? { ...p, valor: Number(valor) } : p));
     setParcelasBaixaManual(novas);
+    // mantém o campo "Prazo do último cheque" igual à data da última folha
+    if (campo === "data" && novas.length) setPrazoUltimoChequeBaixa(novas[novas.length - 1].data);
   }
 
   async function confirmarBaixa() {
@@ -1031,11 +1057,15 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
       {carregando && <div className="empty-state">Carregando...</div>}
 
       {!carregando && sub === "vales" && (
-        gruposVales.length === 0 ? (
+        itensVales.length === 0 ? (
           <div className="empty-state">Nenhuma conta em aberto 🎉</div>
         ) : (
           <div className="lista-grid">
-            {gruposVales.map((g) => (
+            {itensVales.map((g) => g.ehChequeDev ? (
+              <CardChequeDevVale key={g.chave} item={g} expandido={expandidos.has(g.chave)} onToggle={toggleExpandido}
+                destacado={destacados.has(g.chave)} onAlternarDestaque={alternarDestaque}
+                onAtualizado={recarregarChequesDevolvidos} mostrarToast={mostrarToast} />
+            ) : (
               <CardGrupo key={g.chave} g={g} expandido={expandidos.has(g.chave)} onToggle={toggleExpandido} onAbrirGrupo={abrirGrupo}
                 destacado={destacados.has(g.chave)} onAlternarDestaque={alternarDestaque}>
                 <DetalheExpandido
@@ -1111,7 +1141,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
       )}
 
       {sub === "chequesDevolvidos" && (
-        <ChequesDevolvidos clientes={clientes} pedidos={pedidos} mostrarToast={mostrarToast} />
+        <ChequesDevolvidos clientes={clientes} pedidos={pedidos} mostrarToast={mostrarToast} onMudou={setTodosChequesDevolvidos} />
       )}
 
       {!carregando && sub === "recebidos" && (

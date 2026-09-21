@@ -8,7 +8,7 @@ import CampoConta from "./CampoConta";
 
 const FORMAS_COM_CONTA = ["pix_ted", "deposito"];
 
-export default function ChequesDevolvidos({ clientes, pedidos, mostrarToast }) {
+export default function ChequesDevolvidos({ clientes, pedidos, mostrarToast, onMudou }) {
   const [cheques, setCheques] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [mostrarForm, setMostrarForm] = useState(false);
@@ -17,8 +17,10 @@ export default function ChequesDevolvidos({ clientes, pedidos, mostrarToast }) {
 
   async function carregar() {
     setCarregando(true);
-    setCheques(await listarChequesDevolvidos());
+    const lista = await listarChequesDevolvidos();
+    setCheques(lista);
     setCarregando(false);
+    onMudou?.(lista); // mantém os cards roxos da aba Vales em dia
   }
   useEffect(() => { carregar(); }, []);
 
@@ -234,6 +236,22 @@ function FormularioNovoCheque({ clientes, pedidos, onSalvo }) {
 }
 
 function CardChequeDevolvido({ cheque, onAtualizado, mostrarToast }) {
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+        <strong>{cheque.clienteNome}</strong>
+        <span className={"badge " + (cheque.status === "pago" ? "badge-pago" : "badge-atraso")}>
+          {cheque.status === "pago" ? "Pago" : "Em aberto"}
+        </span>
+      </div>
+      <DetalheChequeDevolvido cheque={cheque} onAtualizado={onAtualizado} mostrarToast={mostrarToast} />
+    </div>
+  );
+}
+
+// Informações + histórico + "Registrar pagamento" de um cheque devolvido.
+// Usado aqui (sub-aba Cheques Devolvidos) e nos cards roxos da aba Vales.
+export function DetalheChequeDevolvido({ cheque, onAtualizado, mostrarToast }) {
   const [abrindoBaixa, setAbrindoBaixa] = useState(false);
   const [valorBaixa, setValorBaixa] = useState("");
   const [dataBaixa, setDataBaixa] = useState(todayISO());
@@ -262,13 +280,7 @@ function CardChequeDevolvido({ cheque, onAtualizado, mostrarToast }) {
   }
 
   return (
-    <div className="card" style={{ padding: 14 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-        <strong>{cheque.clienteNome}</strong>
-        <span className={"badge " + (cheque.status === "pago" ? "badge-pago" : "badge-atraso")}>
-          {cheque.status === "pago" ? "Pago" : "Em aberto"}
-        </span>
-      </div>
+    <div onClick={(e) => e.stopPropagation()}>
       <div style={{ fontSize: 13, color: "var(--ink-soft)", margin: "6px 0" }}>
         Cheque de {formatDate(cheque.dataCheque)} · {formatCurrency(cheque.valorCheque)}
       </div>

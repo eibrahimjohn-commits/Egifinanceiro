@@ -11,6 +11,8 @@ import {
   formatCurrency,
   formatDate,
   calcularParcelasCheque,
+  prazoPadraoUltimoCheque,
+  redistribuirDatasCheque,
   calcularValorDevido,
   podeIrDireitoParaRecebidos,
   OPCOES_PRAZO,
@@ -232,9 +234,12 @@ export default function Pedidos() {
       // último cheque (com 1 folha, é o próprio cheque; com mais folhas, dá o
       // ponto de partida pra distribuir) — em vez de deixar em branco.
       if (campo === "tipo" && valor === "cheque" && !f.prazoUltimoCheque) {
-        const daqui30 = new Date();
-        daqui30.setDate(daqui30.getDate() + 30);
-        novaForma.prazoUltimoCheque = daqui30.toISOString().slice(0, 10);
+        novaForma.prazoUltimoCheque = prazoPadraoUltimoCheque(f.numFolhas);
+      }
+      // Mudou o número de folhas: prazo do último volta pro padrão de 30 dias
+      // por folha (30/60/90...). Dá pra ajustar o prazo manualmente depois.
+      if (campo === "numFolhas") {
+        novaForma.prazoUltimoCheque = prazoPadraoUltimoCheque(valor);
       }
       return novaForma;
     }));
@@ -248,30 +253,20 @@ export default function Pedidos() {
     return f.parcelasManual || calcularParcelasCheque(f.prazoUltimoCheque, f.numFolhas, f.valorTotal);
   }
 
+  // Mudar a data da primeira ou da última folha redistribui as do meio
+  // igualmente entre as duas; folha do meio muda só ela.
   function atualizarParcela(i, parcelaIndex, campo, valor) {
     setFormas((arr) => arr.map((f, idx) => {
       if (idx !== i) return f;
       const base = parcelasDaForma(f);
-      let novasParcelas;
-      // Mudar a data da FOLHA 1 arrasta as folhas seguintes junto, mantendo o
-      // mesmo espaçamento entre elas — em vez de só mover a primeira e deixar
-      // as outras "para trás" dela ou soltas sem relação nenhuma.
-      if (parcelaIndex === 0 && campo === "data" && base.length > 1) {
-        const deltaDias = Math.round(
-          (new Date(valor + "T00:00:00") - new Date(base[0].data + "T00:00:00")) / 86400000
-        );
-        novasParcelas = base.map((p, pi) => {
-          if (pi === 0) return { ...p, data: valor };
-          const d = new Date(p.data + "T00:00:00");
-          d.setDate(d.getDate() + deltaDias);
-          return { ...p, data: d.toISOString().slice(0, 10) };
-        });
-      } else {
-        novasParcelas = base.map((p, pi) =>
-          pi === parcelaIndex ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p
-        );
-      }
-      return { ...f, parcelasManual: novasParcelas };
+      const novasParcelas = campo === "data"
+        ? redistribuirDatasCheque(base, parcelaIndex, valor)
+        : base.map((p, pi) => (pi === parcelaIndex ? { ...p, valor: Number(valor) } : p));
+      return {
+        ...f,
+        parcelasManual: novasParcelas,
+        ...(campo === "data" && novasParcelas.length ? { prazoUltimoCheque: novasParcelas[novasParcelas.length - 1].data } : {}),
+      };
     }));
   }
 
@@ -703,7 +698,9 @@ export default function Pedidos() {
                 <div className="field">
                   <label>Prazo do último cheque</label>
                   <input className="input" type="date" value={f.prazoUltimoCheque}
-                    onChange={(e) => updateForma(i, "prazoUltimoCheque", e.target.value)} />
+                    onChange={(e) => (f.parcelasManual
+                      ? atualizarParcela(i, f.parcelasManual.length - 1, "data", e.target.value)
+                      : updateForma(i, "prazoUltimoCheque", e.target.value))} />
                 </div>
                 {f.valorTotal && f.prazoUltimoCheque && Number(f.numFolhas) > 0 && (
                   <div style={{ marginTop: 4 }}>

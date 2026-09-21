@@ -38,23 +38,62 @@ export function dividirValorIgualmente(valorTotal, numParcelas) {
 }
 
 // Gera as datas das parcelas do cheque, igualmente espaçadas entre hoje e o prazo do último cheque.
+// Data local (não UTC) daqui a N dias, no formato AAAA-MM-DD. Usar
+// toISOString direto dava o dia seguinte depois das 21h (fuso de Brasília).
+export function dataDaquiDias(dias, base = new Date()) {
+  const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dias);
+  const tz = d.getTimezoneOffset() * 60000;
+  return new Date(d - tz).toISOString().slice(0, 10);
+}
+
+// Prazo padrão do último cheque: 30 dias por folha (1 folha = 30 dias,
+// 4 folhas = 120 dias -> cheques pra 30/60/90/120).
+export function prazoPadraoUltimoCheque(numFolhas) {
+  const n = Math.max(1, Number(numFolhas) || 1);
+  return dataDaquiDias(30 * n);
+}
+
+// O primeiro cheque vai sempre pra 30 dias (ou pro prazo final, se ele for
+// menor que 30). Os demais ficam espaçados igualmente até o prazo do último.
 export function calcularParcelasCheque(prazoUltimoCheque, numFolhas, valorTotal) {
   const n = Math.max(1, Number(numFolhas) || 1);
   const valores = dividirValorIgualmente(valorTotal, n);
   const hoje = new Date();
+  const hojeMeiaNoite = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
   const dataFinal = new Date(prazoUltimoCheque + "T00:00:00");
-  const diffDias = Math.max(0, Math.round((dataFinal - hoje) / 86400000));
-  const passo = n > 1 ? diffDias / (n - 1) : 0;
+  const diasAteFinal = Math.max(0, Math.round((dataFinal - hojeMeiaNoite) / 86400000));
+  const diasPrimeiro = Math.min(30, diasAteFinal);
+  const passo = n > 1 ? (diasAteFinal - diasPrimeiro) / (n - 1) : 0;
 
   return valores.map((valor, i) => {
-    const dias = n > 1 ? Math.round(passo * i) : diffDias;
-    const data = new Date(hoje.getTime() + dias * 86400000);
-    return {
-      numero: i + 1,
-      valor,
-      data: data.toISOString().slice(0, 10),
-    };
+    const dias = n > 1 ? diasPrimeiro + Math.round(passo * i) : diasAteFinal;
+    return { numero: i + 1, valor, data: dataDaquiDias(dias, hojeMeiaNoite) };
   });
+}
+
+// Editar a data da PRIMEIRA ou da ÚLTIMA folha redistribui as do meio
+// igualmente entre as duas (valores ficam como estão). Folha do meio muda só
+// ela. Se a primeira passar da última (ou vice-versa), a outra ponta é
+// empurrada mantendo 30 dias por folha.
+export function redistribuirDatasCheque(parcelas, index, novaData) {
+  const n = parcelas.length;
+  if (!novaData || n === 0) return parcelas;
+  const ultimo = n - 1;
+  if (n === 1 || (index !== 0 && index !== ultimo)) {
+    return parcelas.map((p, i) => (i === index ? { ...p, data: novaData } : p));
+  }
+  const paraData = (iso) => new Date(iso + "T00:00:00");
+  let primeira = index === 0 ? novaData : parcelas[0].data;
+  let final = index === ultimo ? novaData : parcelas[ultimo].data;
+  if (paraData(final) < paraData(primeira)) {
+    if (index === 0) final = dataDaquiDias(30 * ultimo, paraData(primeira));
+    else primeira = dataDaquiDias(-30 * ultimo, paraData(final));
+  }
+  const totalDias = Math.round((paraData(final) - paraData(primeira)) / 86400000);
+  return parcelas.map((p, i) => ({
+    ...p,
+    data: i === ultimo ? final : dataDaquiDias(Math.round((totalDias * i) / ultimo), paraData(primeira)),
+  }));
 }
 
 export const ESTADOS_BR = [
@@ -362,12 +401,21 @@ export function normalizarTelefone(numeroBruto) {
   return { numero: formatado, ajustado };
 }
 
+// Primeiro nome pra mensagem: corta no "/" ou " - " (grupos tipo
+// "Rose/Alice/Wellington MG"), pega a primeira palavra e ajusta a caixa
+// ("MARIA DO SOCORRO" -> "Maria").
+export function primeiroNome(nome) {
+  const trecho = String(nome || "").split(/\/| - /)[0].trim();
+  const palavra = trecho.split(/\s+/)[0] || "";
+  return palavra ? palavra.charAt(0).toLocaleUpperCase("pt-BR") + palavra.slice(1).toLocaleLowerCase("pt-BR") : "";
+}
+
 export function linkWhatsAppInativo(telefone, nomeCliente) {
   const { numero: normalizado } = normalizarTelefone(telefone);
   let digitos = String(normalizado || telefone || "").replace(/\D/g, "");
   if (digitos.length <= 11) digitos = "55" + digitos; // adiciona DDI Brasil se faltar
   const mensagem =
-    `Olá ${nomeCliente}, tudo bem?\n` +
+    `Olá${primeiroNome(nomeCliente) ? " " + primeiroNome(nomeCliente) : ""}, tudo bem?\n` +
     `Percebi que faz um tempo que não compra com a gente, como foi a saída do último pedido? ` +
     `Posso estar enviando nosso novo catálogo com muitas novidades? 😁\n` +
     `Aguardo retorno`;

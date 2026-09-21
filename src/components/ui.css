@@ -306,3 +306,4 @@
     display: none;
   }
 }
+.badge-chequedev { background: var(--grape); color: #fff; }
