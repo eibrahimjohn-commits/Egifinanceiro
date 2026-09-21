@@ -619,41 +619,6 @@ export default function Pedidos() {
         )}
       </div>
 
-      {resumoCliente && cliente.id && (
-        <div className="card" style={{ background: "var(--bg)" }}>
-          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Resumo do cliente</h3>
-          <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 12 }}>
-            <div>
-              <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Valor médio das compras</div>
-              <strong style={{ fontSize: 15 }}>{formatCurrency(resumoCliente.mediaCompra)}</strong>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Cheques que já voltaram</div>
-              <strong style={{ fontSize: 15, color: resumoCliente.chequesDevolvidos > 0 ? "var(--red)" : "var(--ink)" }}>
-                {resumoCliente.chequesDevolvidos}
-              </strong>
-            </div>
-          </div>
-          {resumoCliente.ultimasCompras.length > 0 && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 4 }}>Últimas compras</div>
-              {resumoCliente.ultimasCompras.map((c, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                  <span>{formatDate(c.data)}</span>
-                  <strong>{formatCurrency(c.valor)}</strong>
-                </div>
-              ))}
-            </div>
-          )}
-          {resumoCliente.observacao && (
-            <div>
-              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 4 }}>Observação</div>
-              <div style={{ fontSize: 13 }}>{resumoCliente.observacao}</div>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* BLOCO 2: PEDIDO */}
       <div className="card">
         <h2 className="card-title">Pedido</h2>
@@ -790,6 +755,41 @@ export default function Pedidos() {
           {salvando ? "Salvando..." : "Lançar pedido"}
         </button>
       </div>
+
+      {resumoCliente && cliente.id && (
+        <div className="card" style={{ background: "var(--bg)" }}>
+          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Resumo do cliente</h3>
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Valor médio das compras</div>
+              <strong style={{ fontSize: 15 }}>{formatCurrency(resumoCliente.mediaCompra)}</strong>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Cheques que já voltaram</div>
+              <strong style={{ fontSize: 15, color: resumoCliente.chequesDevolvidos > 0 ? "var(--red)" : "var(--ink)" }}>
+                {resumoCliente.chequesDevolvidos}
+              </strong>
+            </div>
+          </div>
+          {resumoCliente.ultimasCompras.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 4 }}>Últimas compras</div>
+              {resumoCliente.ultimasCompras.map((c, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                  <span>{formatDate(c.data)}</span>
+                  <strong>{formatCurrency(c.valor)}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+          {resumoCliente.observacao && (
+            <div>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 4 }}>Observação</div>
+              <div style={{ fontSize: 13 }}>{resumoCliente.observacao}</div>
+            </div>
+          )}
+        </div>
+      )}
       </div>
     </form>
     </>
