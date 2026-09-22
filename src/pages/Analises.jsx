@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
 import { listarPedidos, importarHistoricoPedidos, marcarConferido } from "../lib/pedidos";
-import { listarClientes, registrarContatoInativo, marcarTelefoneIndisponivel, reativarTelefone } from "../lib/clientes";
+import { listarClientes, registrarContatoInativo, marcarTelefoneIndisponivel, reativarTelefone, marcarTelefoneVerificado, desmarcarTelefoneVerificado } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
 import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone, ehTelefoneFixo, linkLigar } from "../lib/constants";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
@@ -90,6 +90,24 @@ export default function Analises({ onAbrirNoVales }) {
       ? { ...c, telefonesIndisponiveis: (c.telefonesIndisponiveis || []).filter((d) => d !== digitos) }
       : c)));
     mostrarToastGenerico("Telefone reativado.");
+  }
+
+  async function handleTelefoneVerificado(g, numero) {
+    const digitos = digitosDe(numero);
+    const ids = g.clientes.filter((c) => telefonesDoCliente(c).some((t) => digitosDe(t.numero) === digitos)).map((c) => c.id);
+    const alvo = ids.length ? ids : g.clientes.map((c) => c.id);
+    await marcarTelefoneVerificado(alvo, digitos);
+    setClientes((atual) => atual.map((c) => (alvo.includes(c.id)
+      ? { ...c, telefonesVerificados: [...new Set([...(c.telefonesVerificados || []), digitos])] }
+      : c)));
+  }
+  async function handleDesfazerVerificado(g, numero) {
+    const digitos = digitosDe(numero);
+    const ids = g.clientes.filter((c) => (c.telefonesVerificados || []).includes(digitos)).map((c) => c.id);
+    await desmarcarTelefoneVerificado(ids, digitos);
+    setClientes((atual) => atual.map((c) => (ids.includes(c.id)
+      ? { ...c, telefonesVerificados: (c.telefonesVerificados || []).filter((d) => d !== digitos) }
+      : c)));
   }
 
   async function handleArquivoHistorico(e) {
@@ -552,6 +570,7 @@ export default function Analises({ onAbrirNoVales }) {
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {telefones.map(({ numero, rotulo, foiAjustado }) => {
                           const fixo = ehTelefoneFixo(numero);
+                          const verificado = g.clientes.some((c) => (c.telefonesVerificados || []).includes(digitosDe(numero)));
                           return (
                             <div key={numero} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                               <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>
@@ -569,10 +588,23 @@ export default function Analises({ onAbrirNoVales }) {
                                   Mandar mensagem
                                 </a>
                               )}
-                              <button type="button" className="btn btn-danger" style={{ fontSize: 12, padding: "4px 10px" }}
-                                onClick={(e) => { e.stopPropagation(); handleTelefoneIndisponivel(g, numero); }}>
-                                Telefone indisponível
-                              </button>
+                              {verificado ? (
+                                <span className="badge badge-pago" style={{ cursor: "pointer" }} title="Clique para desfazer a verificação"
+                                  onClick={(e) => { e.stopPropagation(); handleDesfazerVerificado(g, numero); }}>
+                                  ✓ Verificado
+                                </span>
+                              ) : (
+                                <>
+                                  <button type="button" className="btn btn-success" style={{ fontSize: 12, padding: "4px 10px" }}
+                                    onClick={(e) => { e.stopPropagation(); handleTelefoneVerificado(g, numero); }}>
+                                    Telefone verificado
+                                  </button>
+                                  <button type="button" className="btn btn-danger" style={{ fontSize: 12, padding: "4px 10px" }}
+                                    onClick={(e) => { e.stopPropagation(); handleTelefoneIndisponivel(g, numero); }}>
+                                    Telefone indisponível
+                                  </button>
+                                </>
+                              )}
                             </div>
                           );
                         })}

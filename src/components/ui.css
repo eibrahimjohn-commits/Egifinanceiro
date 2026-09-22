@@ -79,8 +79,10 @@
   border: 1.5px solid var(--border);
 }
 
-.btn-danger { background: var(--red); color: #fff; }
-.btn-danger:hover:not(:disabled) { background: #dc2626; }
+.btn-danger { background: var(--red-light); color: #c53030; }
+.btn-danger:hover:not(:disabled) { background: #fbd5d5; }
+.btn-success { background: var(--green-light); color: #158a45; }
+.btn-success:hover:not(:disabled) { background: #cdf3dc; }
 .btn-block { width: 100%; }
 
 .badge {

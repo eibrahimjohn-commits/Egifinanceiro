@@ -357,3 +357,17 @@ export async function reativarTelefone(clienteIds, digitos) {
     updateDoc(doc(db, "clientes", id), { telefonesIndisponiveis: arrayRemove(digitos) })
   ));
 }
+
+// Telefone verificado: número confirmado como correto. Some os botões de
+// verificar/indisponível daquele número e fica só a marca "verificado".
+export async function marcarTelefoneVerificado(clienteIds, digitos) {
+  await Promise.all(clienteIds.map((id) =>
+    updateDoc(doc(db, "clientes", id), { telefonesVerificados: arrayUnion(digitos) })
+  ));
+}
+
+export async function desmarcarTelefoneVerificado(clienteIds, digitos) {
+  await Promise.all(clienteIds.map((id) =>
+    updateDoc(doc(db, "clientes", id), { telefonesVerificados: arrayRemove(digitos) })
+  ));
+}
