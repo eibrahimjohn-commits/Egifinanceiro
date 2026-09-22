@@ -462,3 +462,49 @@ export function tagResumoCliente(saldo, percentual, atrasado) {
 export function podeMoverParaRecebidos(percentual) {
   return percentual <= 10.0001;
 }
+
+// --- Condições comerciais por grupo --------------------------------------
+// Se um cadastro do grupo tem prazo (ou modelo de prazo) e/ou desconto padrão,
+// os cadastros do mesmo grupo que estão SEM esse dado assumem o do grupo.
+// Quem já tem o próprio valor preenchido mantém o seu. Cliente sem grupo
+// fica como está.
+function campoVazio(v) {
+  return v === undefined || v === null || v === "";
+}
+export function condicoesDoGrupo(clientesDoGrupo) {
+  const comPrazo = clientesDoGrupo.find((c) => !campoVazio(c.prazo) || c.prazoModelo);
+  const comDesconto = clientesDoGrupo.find((c) => !campoVazio(c.descontoPadrao));
+  return {
+    prazo: comPrazo ? comPrazo.prazo : undefined,
+    prazoModelo: comPrazo ? comPrazo.prazoModelo || "" : undefined,
+    descontoPadrao: comDesconto ? comDesconto.descontoPadrao : undefined,
+  };
+}
+export function aplicarCondicoesDoGrupo(cliente, condicoes) {
+  if (!condicoes) return cliente;
+  const out = { ...cliente };
+  const semPrazo = campoVazio(cliente.prazo) && !cliente.prazoModelo;
+  if (semPrazo && (condicoes.prazo !== undefined || condicoes.prazoModelo)) {
+    out.prazo = condicoes.prazo;
+    out.prazoModelo = condicoes.prazoModelo;
+    out.prazoHerdadoDoGrupo = true;
+  }
+  if (campoVazio(cliente.descontoPadrao) && !campoVazio(condicoes.descontoPadrao)) {
+    out.descontoPadrao = condicoes.descontoPadrao;
+    out.descontoHerdadoDoGrupo = true;
+  }
+  return out;
+}
+export function herdarCondicoesDoGrupo(clientes) {
+  const porGrupo = {};
+  clientes.forEach((c) => {
+    const g = (c.grupo || "").trim().toLowerCase();
+    if (g) (porGrupo[g] = porGrupo[g] || []).push(c);
+  });
+  const condicoes = {};
+  Object.entries(porGrupo).forEach(([g, lista]) => { condicoes[g] = condicoesDoGrupo(lista); });
+  return clientes.map((c) => {
+    const g = (c.grupo || "").trim().toLowerCase();
+    return g ? aplicarCondicoesDoGrupo(c, condicoes[g]) : c;
+  });
+}

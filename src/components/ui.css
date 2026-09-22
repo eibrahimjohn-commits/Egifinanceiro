@@ -321,3 +321,9 @@
 }
 .analises-lista > .list-item { margin-bottom: 0; height: 100%; }
 .analises-lista > .empty-state { grid-column: 1 / -1; }
+
+/* Chips de filtro da aba Vales — mesmas cores das tags; apagados até ativar */
+.badge-neutro { background: var(--bg); color: var(--ink); border: 1px solid var(--border); }
+.filtro-chip { cursor: pointer; border: 1px solid transparent; opacity: 0.55; font-family: inherit; }
+.filtro-chip:hover { opacity: 0.85; }
+.filtro-chip.filtro-ativo { opacity: 1; border-color: currentColor; }

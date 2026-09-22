@@ -371,3 +371,11 @@ export async function desmarcarTelefoneVerificado(clienteIds, digitos) {
     updateDoc(doc(db, "clientes", id), { telefonesVerificados: arrayRemove(digitos) })
   ));
 }
+
+// Cadastros do mesmo grupo (usado pra herdar prazo/desconto ao lançar pedido).
+export async function listarClientesDoGrupo(grupo) {
+  const nome = (grupo || "").trim();
+  if (!nome) return [];
+  const snap = await getDocs(query(clientesRef, where("grupo", "==", nome)));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}

@@ -10,7 +10,7 @@ import {
   formatCurrency, formatDate, todayISO, FORMAS_PAGAMENTO, CONTAS_PADRAO,
   pedidoEstaAtrasado, calcularPercentualAberto, tagResumoCliente, podeMoverParaRecebidos,
   calcularParcelasCheque, prazoPadraoUltimoCheque, redistribuirDatasCheque, valorDevidoDoPedido, valorPagoDoPedido, saldoDoPedido,
-  parseDescontoPercent, FORMAS_RECEBIMENTO_IMEDIATO,
+  parseDescontoPercent, FORMAS_RECEBIMENTO_IMEDIATO, herdarCondicoesDoGrupo,
 } from "../lib/constants";
 
 const FORMAS_COM_CONTA = ["pix_ted", "deposito"];
@@ -634,6 +634,18 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
 
   const [filtro, setFiltro] = useState("");
   const [ordenacao, setOrdenacao] = useState("data_desc");
+  // Filtros da aba Vales (múltipla escolha). Status entre si = "OU";
+  // Representantes / Sem grupo / Sem prazo = "E" (refinam o resultado).
+  const [filtrosVales, setFiltrosVales] = useState(new Set());
+  const [repFiltro, setRepFiltro] = useState("");
+  function alternarFiltroVales(chave) {
+    setFiltrosVales((atual) => {
+      const novo = new Set(atual);
+      if (novo.has(chave)) novo.delete(chave); else novo.add(chave);
+      if (chave === "representantes" && !novo.has(chave)) setRepFiltro("");
+      return novo;
+    });
+  }
   const [expandidos, setExpandidos] = useState(new Set());
 
   const [pedidoBaixa, setPedidoBaixa] = useState(null);
@@ -729,8 +741,10 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   }
 
   const pedidosAtivos = pedidos.filter((p) => !p.arquivado);
+  // Cadastro "efetivo": quem está sem prazo/desconto assume o do grupo.
+  // (A edição de cadastro continua usando a lista crua `clientes`.)
   const clientesPorId = {};
-  clientes.forEach((c) => { clientesPorId[c.id] = c; });
+  herdarCondicoesDoGrupo(clientes).forEach((c) => { clientesPorId[c.id] = c; });
   // Mesma correção de "sempre usar o cadastro atual" que já fizemos pro nome/grupo:
   // se o representante foi adicionado/editado no cadastro DEPOIS do pedido já
   // existir, o pedido tem que passar a contar como comissão também — não fica
@@ -753,7 +767,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const totalProximos30Dias = pedidosVales.reduce((soma, p) => {
     const saldo = saldoDoPedido(p);
     if (saldo <= 0) return soma;
-    return soma + contribuicao30Dias(saldo, p.clientePrazo);
+    return soma + contribuicao30Dias(saldo, clientesPorId[p.clienteId]?.prazo ?? p.clientePrazo);
   }, 0);
 
   const gruposVales = aplicarFiltroOrdenacao(
@@ -777,12 +791,13 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
         chave: `chdev_${c.id}`,
         cheque: c,
         nome: grupo || cad?.nome || c.clienteNome,
+        nomeGrupo: grupo,
         representante: cad?.representante || c.clienteRepresentante || "",
         saldo,
         percentual: calcularPercentualAberto(saldo, Number(c.valorCheque) || 0),
       };
     });
-  const itensVales = aplicarFiltroOrdenacao(
+  const itensValesTodos = aplicarFiltroOrdenacao(
     [...agruparPorCliente(pedidosVales, clientesPorId), ...chequesDevVales],
     (x) => (x.ehChequeDev ? (x.representante ? `${x.nome} (${x.representante})` : x.nome) : nomeExibicao(x)),
     (x) => (x.ehChequeDev ? x.cheque.dataRegistro : x.dataMaisRecente),
@@ -790,6 +805,35 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     (x) => x.percentual,
     (x) => x.representante
   );
+
+  const STATUS_FILTRO = { Pago: "pago", "Em aberto": "aberto", Atrasado: "atrasado" };
+  function statusDoItem(x) {
+    return x.ehChequeDev ? "chequeDev" : STATUS_FILTRO[x.tag?.texto] || "outro";
+  }
+  // Sem prazo = grupo em que NENHUM cadastro tem prazo. Como o prazo de um
+  // cadastro vale pro grupo todo (herança acima), basta checar o efetivo.
+  function semPrazo(cad) {
+    if (!cad) return true;
+    const vazio = cad.prazo === undefined || cad.prazo === null || cad.prazo === "";
+    return vazio && !cad.prazoModelo;
+  }
+  function clientesDoItem(x) {
+    if (x.ehChequeDev) return [clientesPorId[x.cheque.clienteId]];
+    return Array.from(x.clientesIds || []).map((id) => clientesPorId[id]);
+  }
+  const statusSelecionados = ["pago", "aberto", "atrasado", "chequeDev"].filter((k) => filtrosVales.has(k));
+  const representantesVales = [...new Set(itensValesTodos.map((x) => x.representante).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const itensVales = itensValesTodos.filter((x) => {
+    if (statusSelecionados.length && !statusSelecionados.includes(statusDoItem(x))) return false;
+    if (filtrosVales.has("representantes")) {
+      if (!x.representante) return false;
+      if (repFiltro && x.representante !== repFiltro) return false;
+    }
+    if (filtrosVales.has("semGrupo") && x.nomeGrupo) return false;
+    if (filtrosVales.has("semPrazo") && !clientesDoItem(x).some(semPrazo)) return false;
+    return true;
+  });
   const gruposRecebidos = aplicarFiltroOrdenacao(
     agruparPorCliente(pedidosRecebidos, clientesPorId),
     (g) => nomeExibicao(g),
@@ -1017,7 +1061,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
 
       {sub === "vales" && (
         <div className="card">
-          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
             {!mostrarTotais ? (
               <button type="button" className="btn btn-secondary" onClick={() => setMostrarTotais(true)}>
                 👁 Visualizar totais
@@ -1036,6 +1080,39 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
                 </div>
               </>
             )}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              {[
+                { chave: "pago", texto: "Pagos", classe: "badge-pago" },
+                { chave: "aberto", texto: "Em aberto", classe: "badge-aberto" },
+                { chave: "atrasado", texto: "Atrasado", classe: "badge-atraso" },
+                { chave: "chequeDev", texto: "Cheque dev.", classe: "badge-chequedev" },
+                { chave: "representantes", texto: "Representantes", classe: "badge-neutro" },
+                { chave: "semGrupo", texto: "Sem grupo", classe: "badge-neutro" },
+                { chave: "semPrazo", texto: "Sem prazo", classe: "badge-neutro" },
+              ].map((f) => (
+                <button key={f.chave} type="button"
+                  className={"badge filtro-chip " + f.classe + (filtrosVales.has(f.chave) ? " filtro-ativo" : "")}
+                  onClick={() => alternarFiltroVales(f.chave)}>
+                  {filtrosVales.has(f.chave) ? "✓ " : ""}{f.texto}
+                </button>
+              ))}
+              {filtrosVales.has("representantes") && (
+                <select className="input" style={{ width: "auto", padding: "4px 8px", fontSize: 12 }}
+                  value={repFiltro} onChange={(e) => setRepFiltro(e.target.value)}>
+                  <option value="">Todos os representantes</option>
+                  {representantesVales.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              )}
+              {filtrosVales.size > 0 && (
+                <>
+                  <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{itensVales.length} de {itensValesTodos.length}</span>
+                  <button type="button" className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 8px" }}
+                    onClick={() => { setFiltrosVales(new Set()); setRepFiltro(""); }}>
+                    Limpar filtros
+                  </button>
+                </>
+              )}
+            </div>
             <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
               {destacados.size > 0 && (
                 <button type="button" className="btn btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }}
@@ -1058,7 +1135,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
 
       {!carregando && sub === "vales" && (
         itensVales.length === 0 ? (
-          <div className="empty-state">Nenhuma conta em aberto 🎉</div>
+          <div className="empty-state">{filtrosVales.size > 0 ? "Nenhum card com esses filtros." : "Nenhuma conta em aberto 🎉"}</div>
         ) : (
           <div className="lista-grid">
             {itensVales.map((g) => g.ehChequeDev ? (

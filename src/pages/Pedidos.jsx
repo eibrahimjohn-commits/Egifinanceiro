@@ -1,6 +1,6 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import "../components/ui.css";
-import { buscarCliente, salvarCliente, consultarCnpj, gerarCodigoUnico } from "../lib/clientes";
+import { buscarCliente, salvarCliente, consultarCnpj, gerarCodigoUnico, listarClientesDoGrupo, listarGruposUnicos } from "../lib/clientes";
 import { criarPedido, buscarPendenciasCliente } from "../lib/pedidos";
 import { listarChequesDevolvidos } from "../lib/chequesDevolvidos";
 import {
@@ -18,6 +18,8 @@ import {
   OPCOES_PRAZO,
   idPrazoAtual,
   parseDescontoCampos,
+  condicoesDoGrupo,
+  aplicarCondicoesDoGrupo,
   montarDescontoTexto,
   descontoAplicavelAoPedido,
 } from "../lib/constants";
@@ -48,6 +50,9 @@ function novaForma() {
 
 export default function Pedidos() {
   const [cliente, setCliente] = useState(CLIENTE_VAZIO);
+  // Grupos já cadastrados — sugestões no campo "Grupo de cliente".
+  const [gruposExistentes, setGruposExistentes] = useState([]);
+  useEffect(() => { listarGruposUnicos().then(setGruposExistentes).catch(() => {}); }, []);
   const [descontoNumero, setDescontoNumero] = useState("");
   const [descontoCondicao, setDescontoCondicao] = useState("avista");
   const [matches, setMatches] = useState([]);
@@ -117,7 +122,35 @@ export default function Pedidos() {
     }, 300);
   }
 
+  // Cliente sem prazo/desconto assume o do grupo (se algum cadastro do
+  // grupo tiver). Busca os colegas de grupo e completa o formulário; o valor
+  // herdado fica gravado no cadastro deste CNPJ quando o pedido é salvo.
+  async function completarComGrupo(c) {
+    if (!c.grupo) return;
+    const semPrazo = (c.prazo === undefined || c.prazo === null || c.prazo === "") && !c.prazoModelo;
+    const semDesconto = !c.descontoPadrao;
+    if (!semPrazo && !semDesconto) return;
+    try {
+      const colegas = await listarClientesDoGrupo(c.grupo);
+      const efetivo = aplicarCondicoesDoGrupo(c, condicoesDoGrupo(colegas));
+      if (!efetivo.prazoHerdadoDoGrupo && !efetivo.descontoHerdadoDoGrupo) return;
+      setCliente((atual) => (atual.id !== c.id ? atual : {
+        ...atual,
+        ...(efetivo.prazoHerdadoDoGrupo ? { prazo: efetivo.prazo ?? "", prazoModelo: efetivo.prazoModelo || "" } : {}),
+        ...(efetivo.descontoHerdadoDoGrupo ? { descontoPadrao: efetivo.descontoPadrao } : {}),
+      }));
+      if (efetivo.descontoHerdadoDoGrupo) {
+        const { numero, condicao } = parseDescontoCampos(efetivo.descontoPadrao);
+        setDescontoNumero(numero);
+        setDescontoCondicao(condicao);
+      }
+    } catch {
+      // sem conexão: segue com o cadastro como está
+    }
+  }
+
   function preencherCliente(c) {
+    completarComGrupo(c);
     setCliente({
       id: c.id,
       codigo: c.codigo || "",
@@ -596,9 +629,18 @@ export default function Pedidos() {
         <div className="row">
           <div className="field">
             <label>Grupo de cliente <span style={{ fontWeight: 400, color: "var(--ink-soft)" }}>(opcional, para juntar CNPJs do mesmo grupo)</span></label>
-            <input className="input" value={cliente.grupo}
-              onChange={(e) => atualizarCliente("grupo", e.target.value)}
-              placeholder="Ex: Rede Bijoux Ltda" />
+            <input className="input" list="lista-grupos-pedido" value={cliente.grupo}
+              onChange={(e) => {
+                const valor = e.target.value;
+                atualizarCliente("grupo", valor);
+                // escolheu um grupo que já existe: puxa prazo/desconto dele
+                // se este cliente ainda não tiver os seus
+                if (gruposExistentes.includes(valor)) completarComGrupo({ ...cliente, grupo: valor });
+              }}
+              placeholder="Digite ou escolha um grupo existente" />
+            <datalist id="lista-grupos-pedido">
+              {gruposExistentes.map((g) => <option key={g} value={g} />)}
+            </datalist>
           </div>
           <div className="field">
             <label>Observação</label>

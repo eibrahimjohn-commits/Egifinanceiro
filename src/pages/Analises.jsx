@@ -3,7 +3,7 @@ import "../components/ui.css";
 import { listarPedidos, importarHistoricoPedidos, marcarConferido } from "../lib/pedidos";
 import { listarClientes, registrarContatoInativo, marcarTelefoneIndisponivel, reativarTelefone, marcarTelefoneVerificado, desmarcarTelefoneVerificado } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
-import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone, ehTelefoneFixo, linkLigar } from "../lib/constants";
+import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone, ehTelefoneFixo, linkLigar, herdarCondicoesDoGrupo } from "../lib/constants";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 
 const DIAS_INATIVO = 60;
@@ -156,8 +156,11 @@ export default function Analises({ onAbrirNoVales }) {
   // quanto pra saber o prazo de pagamento vigente de cada cliente.
   const clientesPorId = {};
   clientes.forEach((c) => { clientesPorId[c.id] = c; });
+  // Pra calcular atraso, quem está sem prazo assume o prazo do grupo.
+  const clientesEfetivosPorId = {};
+  herdarCondicoesDoGrupo(clientes).forEach((c) => { clientesEfetivosPorId[c.id] = c; });
 
-  const atrasados = pedidos.filter((p) => pedidoEstaAtrasado(p, clientesPorId[p.clienteId]));
+  const atrasados = pedidos.filter((p) => pedidoEstaAtrasado(p, clientesEfetivosPorId[p.clienteId]));
 
   // Clientes inativos: última compra há mais de 60 dias, sem vale em aberto
   const ultimaCompraPorCliente = {};
