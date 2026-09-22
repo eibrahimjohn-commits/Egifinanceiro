@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
 import { listarPedidos, importarHistoricoPedidos, marcarConferido } from "../lib/pedidos";
-import { listarClientes, registrarContatoInativo } from "../lib/clientes";
+import { listarClientes, registrarContatoInativo, marcarTelefoneIndisponivel, reativarTelefone } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
-import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone } from "../lib/constants";
+import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone, ehTelefoneFixo, linkLigar } from "../lib/constants";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 
 const DIAS_INATIVO = 60;
@@ -15,6 +15,15 @@ export default function Analises({ onAbrirNoVales }) {
   const [carregando, setCarregando] = useState(true);
   const [modalAberto, setModalAberto] = useState(null); // { clientes, grupoNome }
   const [ordenacaoInativos, setOrdenacaoInativos] = useState("nome_asc");
+  const [ordenacaoSemContato, setOrdenacaoSemContato] = useState("ultimaCompra_desc");
+  // Qual análise está aberta — lembrada no navegador entre uma visita e outra.
+  const [analiseAtiva, setAnaliseAtivaState] = useState(() => {
+    try { return localStorage.getItem("egi-analise-ativa") || "inativos"; } catch { return "inativos"; }
+  });
+  function setAnaliseAtiva(v) {
+    setAnaliseAtivaState(v);
+    try { localStorage.setItem("egi-analise-ativa", v); } catch { /* sem storage, só não lembra */ }
+  }
   const [expandidosInativos, setExpandidosInativos] = useState(new Set());
 
   function toggleExpandidoInativo(chave) {
@@ -56,6 +65,31 @@ export default function Analises({ onAbrirNoVales }) {
   async function handleContatoRealizado(clienteId) {
     await registrarContatoInativo(clienteId);
     setClientes((atual) => atual.map((c) => (c.id === clienteId ? { ...c, ultimoContatoInativo: new Date().toISOString().slice(0, 10) } : c)));
+  }
+
+  // Telefone indisponível: grava em todos os cadastros do grupo que têm esse
+  // número e atualiza a tela na hora (sem recarregar tudo).
+  function digitosDe(numero) {
+    return String(numero || "").replace(/\D/g, "");
+  }
+  async function handleTelefoneIndisponivel(g, numero) {
+    if (!window.confirm(`Marcar ${numero} como indisponível? Ele deixa de aparecer nas listas de contato.`)) return;
+    const digitos = digitosDe(numero);
+    const ids = g.clientes.filter((c) => telefonesDoCliente(c).some((t) => digitosDe(t.numero) === digitos)).map((c) => c.id);
+    const alvo = ids.length ? ids : g.clientes.map((c) => c.id);
+    await marcarTelefoneIndisponivel(alvo, digitos);
+    setClientes((atual) => atual.map((c) => (alvo.includes(c.id)
+      ? { ...c, telefonesIndisponiveis: [...new Set([...(c.telefonesIndisponiveis || []), digitos])] }
+      : c)));
+    mostrarToastGenerico("Telefone marcado como indisponível.");
+  }
+  async function handleReativarTelefone(g, digitos) {
+    const ids = g.clientes.filter((c) => (c.telefonesIndisponiveis || []).includes(digitos)).map((c) => c.id);
+    await reativarTelefone(ids, digitos);
+    setClientes((atual) => atual.map((c) => (ids.includes(c.id)
+      ? { ...c, telefonesIndisponiveis: (c.telefonesIndisponiveis || []).filter((d) => d !== digitos) }
+      : c)));
+    mostrarToastGenerico("Telefone reativado.");
   }
 
   async function handleArquivoHistorico(e) {
@@ -187,6 +221,9 @@ export default function Analises({ onAbrirNoVales }) {
       });
       if (todosBaixados) return false;
       if (!g.ultimaCompra) return false; // nunca comprou - não é "parou de comprar"
+      // sem nenhum número ativo não tem como abordar — vai pra lista
+      // "Clientes sem contato ativo" em vez de ficar aqui
+      if (telefonesAtivosDoGrupo(g).length === 0) return false;
       const dias = (hoje - new Date(g.ultimaCompra)) / 86400000;
       if (dias < DIAS_INATIVO) return false;
       // se já entramos em contato recentemente (e ninguém do grupo comprou depois
@@ -222,6 +259,35 @@ export default function Analises({ onAbrirNoVales }) {
     });
     return todos;
   }
+
+  function indisponiveisDoGrupo(g) {
+    return new Set(g.clientes.flatMap((c) => c.telefonesIndisponiveis || []));
+  }
+  function telefonesAtivosDoGrupo(g) {
+    const bloqueados = indisponiveisDoGrupo(g);
+    return telefonesDoGrupo(g).filter((t) => !bloqueados.has(String(t.numero || "").replace(/\D/g, "")));
+  }
+
+  // Clientes sem contato ativo: grupo (ou cliente sem grupo) sem nenhum
+  // número cadastrado, ou com todos os números marcados como indisponíveis.
+  const gruposSemContato = Array.from(gruposTodos.values())
+    .filter((g) => telefonesAtivosDoGrupo(g).length === 0)
+    .map((g) => {
+      const ultimaCompra = g.clientes.reduce((max, c) => {
+        const u = ultimaCompraDoCliente(c);
+        return u && (!max || u > max) ? u : max;
+      }, "");
+      const indisponiveis = telefonesDoGrupo(g).filter((t) => indisponiveisDoGrupo(g).has(String(t.numero || "").replace(/\D/g, "")));
+      return { ...g, ultimaCompra, indisponiveis };
+    })
+    .sort((a, b) => {
+      const [campo, dir] = ordenacaoSemContato.split("_");
+      const mult = dir === "asc" ? 1 : -1;
+      if (campo === "nome") return mult * nomeGrupoOuCliente(a).localeCompare(nomeGrupoOuCliente(b), "pt-BR");
+      // quem nunca comprou fica sempre no fim, nas duas direções
+      if (!a.ultimaCompra || !b.ultimaCompra) return (a.ultimaCompra ? -1 : 1) - (b.ultimaCompra ? -1 : 1);
+      return mult * a.ultimaCompra.localeCompare(b.ultimaCompra);
+    });
 
   async function handleContatoRealizadoGrupo(g) {
     await Promise.all(g.clientes.map((c) => handleContatoRealizado(c.id)));
@@ -392,22 +458,21 @@ export default function Analises({ onAbrirNoVales }) {
       </div>
       )}
 
-      <div className="analises-nav-mobile">
-        <button type="button" onClick={() => document.getElementById("secao-atrasados")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
-          🔴 Atrasados ({atrasados.length})
-        </button>
-        <button type="button" onClick={() => document.getElementById("secao-inativos")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
-          😴 Inativos ({gruposInativosOrdenados.length})
-        </button>
-        <button type="button" onClick={() => document.getElementById("secao-mapa-calor")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
-          🗺️ Mapa de calor
-        </button>
+      <div className="card" style={{ padding: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <label style={{ fontSize: 13, color: "var(--ink-soft)" }}>Análise</label>
+        <select className="input" style={{ width: "auto", minWidth: 260 }} value={analiseAtiva} onChange={(e) => setAnaliseAtiva(e.target.value)}>
+          <option value="atrasados">🔴 Pagamentos atrasados ({atrasados.length})</option>
+          <option value="inativos">😴 Clientes inativos ({gruposInativosOrdenados.length})</option>
+          <option value="semContato">📵 Clientes sem contato ativo ({gruposSemContato.length})</option>
+          <option value="mapaCalor">🗺️ Mapa de calor — cidade/estado</option>
+        </select>
       </div>
 
-      <div className="analises-grid">
+      <div>
+        {analiseAtiva === "atrasados" && (
         <div className="card" id="secao-atrasados">
           <h2 className="card-title">Pagamentos atrasados ({atrasados.length})</h2>
-          <div className="analises-col-scroll">
+          <div className="analises-lista">
             {atrasados.length === 0 ? (
               <div className="empty-state" style={{ padding: 12 }}>Nenhum pagamento atrasado.</div>
             ) : (
@@ -441,7 +506,9 @@ export default function Analises({ onAbrirNoVales }) {
             )}
           </div>
         </div>
+        )}
 
+        {analiseAtiva === "inativos" && (
         <div className="card" id="secao-inativos">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 14 }}>
             <h2 className="card-title" style={{ marginBottom: 0 }}>Clientes inativos (+{DIAS_INATIVO} dias, sem pendências)</h2>
@@ -455,12 +522,13 @@ export default function Analises({ onAbrirNoVales }) {
               <option value="mediaCompra_asc">Valor médio (menor)</option>
             </select>
           </div>
-          <div className="analises-col-scroll">
+          <div className="analises-lista">
             {gruposInativosOrdenados.length === 0 ? (
               <div className="empty-state" style={{ padding: 12 }}>Nenhum cliente inativo no momento.</div>
             ) : (
               gruposInativosOrdenados.map((g) => {
-                const telefones = telefonesDoGrupo(g);
+                const telefones = telefonesAtivosDoGrupo(g);
+                const qtdIndisponiveis = telefonesDoGrupo(g).length - telefones.length;
                 const expandido = expandidosInativos.has(g.chave);
                 const multiplos = g.clientes.length > 1;
                 return (
@@ -482,17 +550,42 @@ export default function Analises({ onAbrirNoVales }) {
                     </div>
                     {telefones.length > 0 && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {telefones.map(({ numero, rotulo, foiAjustado }) => (
-                          <div key={numero} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                              📞 {numero} <span style={{ fontSize: 11 }}>({rotulo}{foiAjustado ? " · 9 adicionado" : ""})</span>
-                            </span>
-                            <a href={linkWhatsAppInativo(numero, nomeGrupoOuCliente(g))} target="_blank" rel="noopener noreferrer"
-                              className="btn btn-secondary" style={{ fontSize: 12, padding: "4px 10px" }}
-                              onClick={(e) => e.stopPropagation()}>
-                              Mandar mensagem
-                            </a>
-                          </div>
+                        {telefones.map(({ numero, rotulo, foiAjustado }) => {
+                          const fixo = ehTelefoneFixo(numero);
+                          return (
+                            <div key={numero} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                                📞 {numero} <span style={{ fontSize: 11 }}>({rotulo}{fixo ? " · fixo" : ""}{foiAjustado ? " · 9 adicionado" : ""})</span>
+                              </span>
+                              {fixo ? (
+                                <a href={linkLigar(numero)} className="btn btn-secondary" style={{ fontSize: 12, padding: "4px 10px" }}
+                                  onClick={(e) => e.stopPropagation()}>
+                                  Ligar
+                                </a>
+                              ) : (
+                                <a href={linkWhatsAppInativo(numero, nomeGrupoOuCliente(g))} target="_blank" rel="noopener noreferrer"
+                                  className="btn btn-secondary" style={{ fontSize: 12, padding: "4px 10px" }}
+                                  onClick={(e) => e.stopPropagation()}>
+                                  Mandar mensagem
+                                </a>
+                              )}
+                              <button type="button" className="btn btn-danger" style={{ fontSize: 12, padding: "4px 10px" }}
+                                onClick={(e) => { e.stopPropagation(); handleTelefoneIndisponivel(g, numero); }}>
+                                Telefone indisponível
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {qtdIndisponiveis > 0 && (
+                      <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>
+                        Indisponível:{" "}
+                        {telefonesDoGrupo(g).filter((t) => indisponiveisDoGrupo(g).has(String(t.numero).replace(/\D/g, ""))).map((t) => (
+                          <button key={t.numero} type="button" className="btn btn-ghost" style={{ fontSize: 11, padding: "1px 6px" }}
+                            onClick={() => handleReativarTelefone(g, String(t.numero).replace(/\D/g, ""))}>
+                            ↺ {t.numero}
+                          </button>
                         ))}
                       </div>
                     )}
@@ -515,10 +608,12 @@ export default function Analises({ onAbrirNoVales }) {
             )}
           </div>
         </div>
+        )}
 
+        {analiseAtiva === "mapaCalor" && (
         <div className="card" id="secao-mapa-calor">
           <h2 className="card-title">Mapa de calor — por cidade/estado</h2>
-          <div className="analises-col-scroll">
+          <div className="analises-lista">
             {cidadesOrdenadas.length === 0 ? (
               <div className="empty-state" style={{ padding: 12 }}>Sem dados de pedidos ainda.</div>
             ) : (
@@ -541,6 +636,58 @@ export default function Analises({ onAbrirNoVales }) {
             )}
           </div>
         </div>
+        )}
+
+        {analiseAtiva === "semContato" && (
+        <div className="card" id="secao-sem-contato">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 14 }}>
+            <h2 className="card-title" style={{ marginBottom: 0 }}>Clientes sem contato ativo ({gruposSemContato.length})</h2>
+            <select className="input" style={{ width: "auto", padding: "6px 10px", fontSize: 12 }}
+              value={ordenacaoSemContato} onChange={(e) => setOrdenacaoSemContato(e.target.value)}>
+              <option value="ultimaCompra_desc">Última compra (recente)</option>
+              <option value="ultimaCompra_asc">Última compra (antiga)</option>
+              <option value="nome_asc">Nome (A-Z)</option>
+              <option value="nome_desc">Nome (Z-A)</option>
+            </select>
+          </div>
+          <div className="analises-lista">
+            {gruposSemContato.length === 0 ? (
+              <div className="empty-state" style={{ padding: 12 }}>Todos os clientes têm pelo menos um número ativo.</div>
+            ) : (
+              gruposSemContato.map((g) => (
+                <div key={g.chave} className="list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, cursor: "default" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <strong>{nomeGrupoOuCliente(g)}</strong>
+                    {g.clientes.length > 1 && <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{g.clientes.length} CNPJs</span>}
+                  </div>
+                  {g.representante && <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Rep: {g.representante}</div>}
+                  <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                    Última compra: <strong style={{ color: "var(--ink)" }}>{g.ultimaCompra ? formatDate(g.ultimaCompra) : "nunca comprou"}</strong>
+                  </div>
+                  {g.indisponiveis.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "var(--red)" }}>Nenhum número cadastrado</div>
+                  ) : (
+                    g.indisponiveis.map((t) => (
+                      <div key={t.numero} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--ink-soft)" }}>
+                        <span style={{ textDecoration: "line-through" }}>📞 {t.numero}</span>
+                        <span>({t.rotulo} · indisponível)</span>
+                        <button type="button" className="btn btn-ghost" style={{ fontSize: 11, padding: "2px 8px" }}
+                          onClick={() => handleReativarTelefone(g, String(t.numero).replace(/\D/g, ""))}>
+                          Reativar
+                        </button>
+                      </div>
+                    ))
+                  )}
+                  <button type="button" className="btn btn-secondary" style={{ fontSize: 12, padding: "6px 10px", alignSelf: "flex-start" }}
+                    onClick={() => setModalAberto({ clientes: g.clientes, grupoNome: g.nomeGrupo || undefined })}>
+                    Abrir cadastro
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+        )}
       </div>
 
       {modalAberto && (

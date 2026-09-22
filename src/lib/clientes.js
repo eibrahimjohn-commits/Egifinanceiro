@@ -10,6 +10,8 @@ import {
   orderBy,
   serverTimestamp,
   writeBatch,
+  arrayUnion,
+  arrayRemove,
 } from "firebase/firestore";
 import { db } from "./firebase";
 
@@ -338,4 +340,20 @@ export async function consultarCnpj(cnpj) {
       consultadoEm: new Date().toISOString(),
     },
   };
+}
+
+// Telefone indisponível (celular sem WhatsApp, número errado etc.): guarda só
+// os dígitos em telefonesIndisponiveis de cada cadastro do grupo que tem esse
+// número. O número some das listas de Análises; se o grupo ficar sem nenhum
+// número ativo, passa pra lista "Clientes sem contato ativo".
+export async function marcarTelefoneIndisponivel(clienteIds, digitos) {
+  await Promise.all(clienteIds.map((id) =>
+    updateDoc(doc(db, "clientes", id), { telefonesIndisponiveis: arrayUnion(digitos) })
+  ));
+}
+
+export async function reativarTelefone(clienteIds, digitos) {
+  await Promise.all(clienteIds.map((id) =>
+    updateDoc(doc(db, "clientes", id), { telefonesIndisponiveis: arrayRemove(digitos) })
+  ));
 }

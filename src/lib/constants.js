@@ -401,6 +401,21 @@ export function normalizarTelefone(numeroBruto) {
   return { numero: formatado, ajustado };
 }
 
+// Fixo = número local de 8 dígitos começando com 2 a 5 (celular sempre
+// começa com 6-9 e, depois da normalização, tem 9 dígitos).
+export function ehTelefoneFixo(numero) {
+  let digitos = String(numero || "").replace(/\D/g, "");
+  if (digitos.length > 11 && digitos.startsWith("55")) digitos = digitos.slice(2);
+  if (digitos.length !== 10) return false;
+  return /^[2-5]/.test(digitos.slice(2));
+}
+
+export function linkLigar(numero) {
+  let digitos = String(numero || "").replace(/\D/g, "");
+  if (digitos.length <= 11) digitos = "55" + digitos;
+  return `tel:+${digitos}`;
+}
+
 // Primeiro nome pra mensagem: corta no "/" ou " - " (grupos tipo
 // "Rose/Alice/Wellington MG"), pega a primeira palavra e ajusta a caixa
 // ("MARIA DO SOCORRO" -> "Maria").

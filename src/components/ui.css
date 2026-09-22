@@ -79,6 +79,8 @@
   border: 1.5px solid var(--border);
 }
 
+.btn-danger { background: var(--red); color: #fff; }
+.btn-danger:hover:not(:disabled) { background: #dc2626; }
 .btn-block { width: 100%; }
 
 .badge {
@@ -307,3 +309,13 @@
   }
 }
 .badge-chequedev { background: var(--grape); color: #fff; }
+
+/* Análises: uma análise por vez, cards lado a lado ocupando a largura toda */
+.analises-lista {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.analises-lista > .list-item { margin-bottom: 0; height: 100%; }
+.analises-lista > .empty-state { grid-column: 1 / -1; }
