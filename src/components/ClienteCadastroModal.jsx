@@ -173,7 +173,12 @@ export default function ClienteCadastroModal({
             <div className="field">
               <label>Nome / Fantasia *</label>
               <input className="input" value={editando.nome || ""}
-                onChange={(e) => setEditando({ ...editando, nome: e.target.value })} />
+                onChange={(e) => setEditando((c) => ({
+                  ...c,
+                  nome: e.target.value,
+                  // grupo em branco ou ainda igual ao nome antigo acompanha o nome
+                  ...(!c.grupo || c.grupo === c.nome ? { grupo: e.target.value } : {}),
+                }))} />
             </div>
             <div className="field">
               <label>Razão Social</label>

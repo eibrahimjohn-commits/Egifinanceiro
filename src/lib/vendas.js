@@ -119,7 +119,17 @@ function comTimeout(promessa, ms) {
   ]);
 }
 
-async function buscarCatalogoPortal() {
+// Guarda o catálogo em memória durante a sessão: ele é usado no import e
+// também na exibição (enriquecerCategorias), sem rebuscar a cada tela.
+let catalogoCache = null;
+
+export async function buscarCatalogoPortal() {
+  if (catalogoCache) return catalogoCache;
+  catalogoCache = await lerCatalogoPortal();
+  return catalogoCache;
+}
+
+async function lerCatalogoPortal() {
   try {
     const snap = await comTimeout(getDocsFromServer(collection(dbPortal(), "products")), 8000);
     const porCodigo = {};
@@ -268,6 +278,53 @@ export async function listarResumoProdutos(mesInicio, mesFim) {
     agrupado.set(chave, atual);
   });
   return Array.from(agrupado.values()).sort((a, b) => b.faturamento - a.faturamento);
+}
+
+// Preenche categoria/subcategoria que ficaram em branco, cruzando o código do
+// produto com o catálogo do Portal. Serve pros dados importados ANTES de a
+// busca de categoria existir: corrige a exibição sem precisar reimportar.
+// Só preenche o que está vazio — categoria já gravada é mantida.
+export async function enriquecerCategorias(produtos) {
+  if (!produtos?.length) return produtos || [];
+  if (produtos.every((p) => p.categoria)) return produtos;
+  const catalogo = await buscarCatalogoPortal();
+  if (!Object.keys(catalogo).length) return produtos;
+  return produtos.map((p) => {
+    if (p.categoria) return p;
+    const doCatalogo = catalogo[String(p.codigoProduto || "").trim()];
+    return doCatalogo ? { ...p, categoria: doCatalogo.categoria, subcategoria: doCatalogo.subcategoria } : p;
+  });
+}
+
+// Grava de vez a categoria nos resumos que estão sem ela, cruzando o código
+// com o catálogo do Portal. Roda uma vez por período: depois disso os dados
+// já saem do banco com categoria e o cruzamento não se repete.
+// Só toca no que está vazio e só em quem tem correspondência no catálogo.
+export async function gravarCategoriasNosResumos(mesInicio, mesFim) {
+  const snap = await getDocsFromServer(query(resumoProdutoMesRef, where("mes", ">=", mesInicio), where("mes", "<=", mesFim)));
+  const semCategoria = snap.docs.filter((d) => !d.data().categoria);
+  if (!semCategoria.length) return 0;
+
+  const catalogo = await buscarCatalogoPortal();
+  if (!Object.keys(catalogo).length) return 0;
+
+  const paraAtualizar = semCategoria
+    .map((d) => ({ ref: d.ref, doCatalogo: catalogo[String(d.data().codigoProduto || "").trim()] }))
+    .filter((x) => x.doCatalogo && (x.doCatalogo.categoria || x.doCatalogo.subcategoria));
+  if (!paraAtualizar.length) return 0;
+
+  const TAMANHO_LOTE = 450;
+  const lotes = [];
+  for (let i = 0; i < paraAtualizar.length; i += TAMANHO_LOTE) lotes.push(paraAtualizar.slice(i, i + TAMANHO_LOTE));
+  await Promise.all(lotes.map(async (pedaco) => {
+    const batch = writeBatch(db);
+    pedaco.forEach(({ ref: docRef, doCatalogo }) => batch.update(docRef, {
+      categoria: doCatalogo.categoria || "",
+      subcategoria: doCatalogo.subcategoria || "",
+    }));
+    await batch.commit();
+  }));
+  return paraAtualizar.length;
 }
 
 export async function listarResumoClientes(mesInicio, mesFim) {

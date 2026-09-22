@@ -1,6 +1,7 @@
 import "./Layout.css";
 import ConnectionBadge from "./ConnectionBadge";
 import AtualizarApp from "./AtualizarApp";
+import AvisoPagamentos from "./AvisoPagamentos";
 
 const TABS = [
   { id: "pedidos", label: "Pedidos" },
@@ -19,6 +20,7 @@ export default function Layout({ active, onChange, wide, full, children }) {
     <div className="layout">
       <header className="topbar">
         <span className="brand">EGI <span className="brand-accent">Financeiro</span></span>
+        <AvisoPagamentos onIr={() => onChange("pagamentos")} />
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <AtualizarApp />
           <ConnectionBadge />

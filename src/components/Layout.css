@@ -5,6 +5,7 @@
 }
 
 .topbar {
+  position: relative;
   background: linear-gradient(120deg, var(--pink), var(--grape));
   padding: 18px 20px;
   color: white;
@@ -78,4 +79,26 @@
     padding-left: 24px;
     padding-right: 24px;
   }
+}
+
+/* Aviso de pagamentos na faixa do topo — centralizado na barra */
+.aviso-pagamentos {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--yellow-light);
+  color: #9a6b00;
+  border: 1px solid #f0c674;
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.aviso-pagamentos:hover { filter: brightness(0.96); }
+@media (max-width: 720px) {
+  /* em tela estreita sai do centro pra não colidir com a marca */
+  .aviso-pagamentos { position: static; transform: none; font-size: 12px; padding: 4px 10px; }
 }

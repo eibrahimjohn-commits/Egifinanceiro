@@ -74,8 +74,14 @@ export default function Pedidos() {
     setTimeout(() => setToast(""), 3500);
   }
 
+  // Grupo acompanha o nome do cliente até alguém mexer no campo Grupo.
+  const [grupoEditado, setGrupoEditado] = useState(false);
   function atualizarCliente(campo, valor) {
-    setCliente((c) => ({ ...c, [campo]: valor }));
+    setCliente((c) => ({
+      ...c,
+      [campo]: valor,
+      ...(campo === "nome" && !grupoEditado ? { grupo: valor } : {}),
+    }));
   }
 
   function atualizarDesconto(numero, condicao) {
@@ -150,6 +156,8 @@ export default function Pedidos() {
   }
 
   function preencherCliente(c) {
+    // cadastro que já tem grupo próprio: o campo não acompanha mais o nome
+    setGrupoEditado(Boolean(c.grupo));
     completarComGrupo(c);
     setCliente({
       id: c.id,
@@ -163,7 +171,7 @@ export default function Pedidos() {
       prazoModelo: c.prazoModelo || "",
       cidade: c.cidade || "",
       estado: c.estado || "",
-      grupo: c.grupo || "",
+      grupo: c.grupo || c.nome || "",
       observacao: c.observacao || "",
     });
     const { numero, condicao } = parseDescontoCampos(c.descontoPadrao);
@@ -217,6 +225,7 @@ export default function Pedidos() {
 
   function resetTudo() {
     setCliente(CLIENTE_VAZIO);
+    setGrupoEditado(false);
     setDescontoNumero("");
     setDescontoCondicao("avista");
     setMatches([]);
@@ -231,6 +240,7 @@ export default function Pedidos() {
   // cliente errado e quer trocar, sem perder o que já preencheu no pedido.
   function limparCliente() {
     setCliente(CLIENTE_VAZIO);
+    setGrupoEditado(false);
     setDescontoNumero("");
     setDescontoCondicao("avista");
     setMatches([]);
@@ -632,6 +642,7 @@ export default function Pedidos() {
             <input className="input" list="lista-grupos-pedido" value={cliente.grupo}
               onChange={(e) => {
                 const valor = e.target.value;
+                setGrupoEditado(true);
                 atualizarCliente("grupo", valor);
                 // escolheu um grupo que já existe: puxa prazo/desconto dele
                 // se este cliente ainda não tiver os seus
