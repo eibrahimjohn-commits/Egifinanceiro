@@ -4,13 +4,13 @@ import {
   lerPlanilhaVendas, importarPlanilhaVendas, listarImportacoes,
   listarResumoDiario, listarResumoClientes,
 } from "../lib/vendas";
-import { formatCurrency, formatDate } from "../lib/constants";
+import { formatCurrency, formatDate, NOMES_MES } from "../lib/constants";
 import SeletorPeriodo from "../components/SeletorPeriodo";
 import { granularidadeParaPeriodo, agruparPorGranularidade } from "../lib/analytics";
 import { chaveVendas, buscarGraficoSalvo, salvarGraficoSalvo, graficoEstaDesatualizado } from "../lib/graficosSalvos";
 import GraficosSalvosLista from "../components/GraficosSalvosLista";
 import {
-  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from "recharts";
 
 function mesAtras(n) {
@@ -50,13 +50,19 @@ function deslocarPeriodo(mesInicio, mesFim, direcao) {
   return { mesInicio: fmt(novoIni), mesFim: fmt(novoFim) };
 }
 
-function TooltipComparacao({ active, payload }) {
+const METRICAS = {
+  faturamento: { sufixo: "_fat", rotulo: "Faturamento", formatar: formatCurrency, tickFormatter: (v) => `${(v / 1000).toFixed(0)}k` },
+  pedidos: { sufixo: "_ped", rotulo: "Pedidos", formatar: (v) => String(Math.round(v || 0)), tickFormatter: (v) => Math.round(v) },
+  ticketMedio: { sufixo: "_tm", rotulo: "Ticket médio", formatar: formatCurrency, tickFormatter: (v) => `${(v / 1000).toFixed(1)}k` },
+};
+
+function TooltipComparacao({ active, payload, formatar }) {
   if (!active || !payload?.length) return null;
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, padding: 10, fontSize: 12 }}>
       {payload.map((p) => (
         <div key={p.dataKey} style={{ color: p.color }}>
-          <strong>{p.payload[p.dataKey + "_label"] || ""}</strong> — {formatCurrency(p.value || 0)}
+          <strong>{p.payload[p.dataKey.replace(/_(fat|ped|tm)$/, "") + "_label"] || ""}</strong> — {(formatar || formatCurrency)(p.value || 0)}
         </div>
       ))}
     </div>
@@ -76,7 +82,34 @@ export default function Vendas() {
   const [mesFim, setMesFim] = useState(estadoInicial.mesFim);
   const [comparacoes, setComparacoes] = useState(estadoInicial.comparacoes);
 
-  const [aba, setAba] = useState("painel"); // painel | salvos
+  const [aba, setAba] = useState("painel"); // painel | salvos | sazonalidade
+  const [tipoGrafico, setTipoGrafico] = useState("linha"); // linha | barras
+  const [metrica, setMetrica] = useState("faturamento"); // faturamento | pedidos | ticketMedio
+
+  // --- Sazonalidade: mesmo mês comparado ano a ano -----------------------
+  const [mesSazonalidade, setMesSazonalidade] = useState(new Date().getMonth() + 1);
+  const [metricaSazonalidade, setMetricaSazonalidade] = useState("faturamento");
+  const [carregandoSaz, setCarregandoSaz] = useState(false);
+  const [dadosSaz, setDadosSaz] = useState(null); // null = ainda não gerado
+
+  const mesesImportadosSet = new Set(importacoes.flatMap((i) => i.meses || []));
+  const anosComEsseMes = Array.from(new Set(Array.from(mesesImportadosSet)
+    .filter((m) => Number(m.slice(5, 7)) === mesSazonalidade)
+    .map((m) => m.slice(0, 4)))).sort();
+
+  async function carregarSazonalidade() {
+    setCarregandoSaz(true);
+    const mesPad = String(mesSazonalidade).padStart(2, "0");
+    const porAno = await Promise.all(anosComEsseMes.map(async (ano) => {
+      const chave = `${ano}-${mesPad}`;
+      const dias = await listarResumoDiario(chave, chave);
+      const faturamento = dias.reduce((s, d) => s + d.faturamento, 0);
+      const pedidos = dias.reduce((s, d) => s + d.pedidos, 0);
+      return { ano, faturamento, pedidos, ticketMedio: pedidos ? faturamento / pedidos : 0 };
+    }));
+    setDadosSaz(porAno);
+    setCarregandoSaz(false);
+  }
   const [carregandoDados, setCarregandoDados] = useState(false);
   const [graficoGerado, setGraficoGerado] = useState(false);
   const [resumoClientes, setResumoClientes] = useState([]);
@@ -242,11 +275,16 @@ export default function Vendas() {
     seriesGrafico.forEach((s, i) => {
       const chave = "s" + i;
       const ponto = s.dados[indice];
-      linha[chave] = ponto?.faturamento;
+      linha[chave + "_fat"] = ponto?.faturamento;
+      linha[chave + "_ped"] = ponto?.pedidos;
+      // Ticket médio do balde: sem pedido no balde fica undefined (não 0),
+      // pra Line/Bar não desenharem um ponto falso ali.
+      linha[chave + "_tm"] = ponto?.pedidos ? ponto.faturamento / ponto.pedidos : undefined;
       linha[chave + "_label"] = ponto?.label;
     });
     return linha;
   });
+  const metricaAtual = METRICAS[metrica];
 
   const granularidadeAtual = granularidadeParaPeriodo(mesInicio, mesFim);
   const nomeGranularidade = { dia: "dia", quinzena: "quinzena", mes: "mês", trimestre: "trimestre", ano: "ano" }[granularidadeAtual];
@@ -262,9 +300,92 @@ export default function Vendas() {
         <button className={"btn " + (aba === "salvos" ? "btn-primary" : "btn-ghost")} style={{ flex: 1, fontSize: 13 }} onClick={() => setAba("salvos")}>
           Gráficos salvos
         </button>
+        <button className={"btn " + (aba === "sazonalidade" ? "btn-primary" : "btn-ghost")} style={{ flex: 1, fontSize: 13 }} onClick={() => setAba("sazonalidade")}>
+          Sazonalidade
+        </button>
       </div>
 
       {aba === "salvos" && <GraficosSalvosLista tipo="vendas" onAbrir={abrirGraficoSalvo} />}
+
+      {aba === "sazonalidade" && (
+        <>
+          <div className="card">
+            <h2 className="card-title">Comparar o mesmo mês ao longo dos anos</h2>
+            <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+              Compara, por exemplo, todo mês de março já importado — um contra o outro — pra separar
+              "mês fraco" de "ano fraco" e ver se a sazonalidade se repete.
+            </p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select className="input" style={{ width: "auto" }} value={mesSazonalidade}
+                onChange={(e) => { setMesSazonalidade(Number(e.target.value)); setDadosSaz(null); }}>
+                {NOMES_MES.map((nome, i) => <option key={nome} value={i + 1}>{nome}</option>)}
+              </select>
+              <button className="btn btn-primary" style={{ padding: "8px 16px" }} onClick={carregarSazonalidade}
+                disabled={carregandoSaz || anosComEsseMes.length === 0}>
+                {carregandoSaz ? "Gerando..." : "Comparar"}
+              </button>
+              {anosComEsseMes.length === 0 && (
+                <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>Nenhum {NOMES_MES[mesSazonalidade - 1]} importado ainda.</span>
+              )}
+            </div>
+          </div>
+
+          {dadosSaz && (
+            <>
+              <div className="card" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {["faturamento", "pedidos", "ticketMedio"].map((m) => (
+                  <button key={m} type="button" className={"btn " + (metricaSazonalidade === m ? "btn-primary" : "btn-ghost")}
+                    style={{ fontSize: 12, padding: "6px 12px" }} onClick={() => setMetricaSazonalidade(m)}>
+                    {METRICAS[m].rotulo}
+                  </button>
+                ))}
+              </div>
+
+              <div className="card">
+                <h2 className="card-title">{NOMES_MES[mesSazonalidade - 1]} — {METRICAS[metricaSazonalidade].rotulo.toLowerCase()} por ano</h2>
+                {dadosSaz.length === 0 ? (
+                  <div className="empty-state">Sem dados.</div>
+                ) : (
+                  <>
+                    <div style={{ width: "100%", height: 260 }}>
+                      <ResponsiveContainer>
+                        <BarChart data={dadosSaz}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                          <XAxis dataKey="ano" tick={{ fontSize: 12 }} />
+                          <YAxis tick={{ fontSize: 11 }} tickFormatter={METRICAS[metricaSazonalidade].tickFormatter} />
+                          <Tooltip formatter={(v) => METRICAS[metricaSazonalidade].formatar(v)} labelFormatter={(a) => `${NOMES_MES[mesSazonalidade - 1]}/${a}`} />
+                          <Bar dataKey={metricaSazonalidade} fill="var(--grape)" radius={[6, 6, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+                      {dadosSaz.map((d, i) => {
+                        const anterior = dadosSaz[i - 1];
+                        const variacao = anterior && anterior[metricaSazonalidade]
+                          ? ((d[metricaSazonalidade] - anterior[metricaSazonalidade]) / anterior[metricaSazonalidade]) * 100
+                          : null;
+                        return (
+                          <div key={d.ano} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                            <span>{NOMES_MES[mesSazonalidade - 1]}/{d.ano}</span>
+                            <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                              <strong>{METRICAS[metricaSazonalidade].formatar(d[metricaSazonalidade])}</strong>
+                              {variacao !== null && (
+                                <span style={{ fontSize: 12, color: variacao >= 0 ? "var(--green)" : "var(--red)" }}>
+                                  {variacao >= 0 ? "▲" : "▼"} {Math.abs(variacao).toFixed(1)}% vs {anterior.ano}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </>
+      )}
 
       {aba === "painel" && (
       <>
@@ -360,8 +481,22 @@ export default function Vendas() {
           <div className="card">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
               <h2 className="card-title" style={{ marginBottom: 0 }}>
-                Faturamento por {nomeGranularidade}
+                {metricaAtual.rotulo} por {nomeGranularidade}
               </h2>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <select className="input" style={{ width: "auto", padding: "4px 8px", fontSize: 12 }}
+                  value={metrica} onChange={(e) => setMetrica(e.target.value)}>
+                  <option value="faturamento">Faturamento</option>
+                  <option value="pedidos">Pedidos</option>
+                  <option value="ticketMedio">Ticket médio</option>
+                </select>
+                <div style={{ display: "flex", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+                  <button type="button" className="btn" style={{ padding: "4px 10px", fontSize: 12, borderRadius: 0, background: tipoGrafico === "linha" ? "var(--pink)" : "transparent", color: tipoGrafico === "linha" ? "white" : "var(--ink)" }}
+                    onClick={() => setTipoGrafico("linha")}>📈 Linha</button>
+                  <button type="button" className="btn" style={{ padding: "4px 10px", fontSize: 12, borderRadius: 0, background: tipoGrafico === "barras" ? "var(--pink)" : "transparent", color: tipoGrafico === "barras" ? "white" : "var(--ink)" }}
+                    onClick={() => setTipoGrafico("barras")}>📊 Barras</button>
+                </div>
+              </div>
               {comparacoes.length < MAX_SERIES - 1 && (
                 <button className="btn btn-secondary" style={{ fontSize: 12, padding: "6px 12px" }} onClick={adicionarComparacao}>
                   + Comparar outro período
@@ -389,19 +524,35 @@ export default function Vendas() {
 
             <div style={{ width: "100%", height: 300, marginTop: 10 }}>
               <ResponsiveContainer>
-                <LineChart data={dadosGrafico}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis dataKey="indice" tick={{ fontSize: 11 }} tickFormatter={(i) => seriesGrafico[0]?.dados[i]?.label || ""} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
-                  <Tooltip content={<TooltipComparacao />} />
-                  {seriesGrafico.length > 1 && <Legend formatter={(_, entry) => {
-                    const s = seriesGrafico[Number(entry.dataKey.slice(1))];
-                    return s ? `${s.mesInicio} a ${s.mesFim}` : entry.dataKey;
-                  }} />}
-                  {seriesGrafico.map((s, i) => (
-                    <Line key={i} type="monotone" dataKey={"s" + i} stroke={s.cor} strokeWidth={2} dot={false} connectNulls />
-                  ))}
-                </LineChart>
+                {tipoGrafico === "linha" ? (
+                  <LineChart data={dadosGrafico}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="indice" tick={{ fontSize: 11 }} tickFormatter={(i) => seriesGrafico[0]?.dados[i]?.label || ""} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={metricaAtual.tickFormatter} />
+                    <Tooltip content={<TooltipComparacao formatar={metricaAtual.formatar} />} />
+                    {seriesGrafico.length > 1 && <Legend formatter={(_, entry) => {
+                      const s = seriesGrafico[Number(entry.dataKey.replace(metricaAtual.sufixo, "").slice(1))];
+                      return s ? `${s.mesInicio} a ${s.mesFim}` : entry.dataKey;
+                    }} />}
+                    {seriesGrafico.map((s, i) => (
+                      <Line key={i} type="monotone" dataKey={"s" + i + metricaAtual.sufixo} stroke={s.cor} strokeWidth={2} dot={false} connectNulls />
+                    ))}
+                  </LineChart>
+                ) : (
+                  <BarChart data={dadosGrafico}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="indice" tick={{ fontSize: 11 }} tickFormatter={(i) => seriesGrafico[0]?.dados[i]?.label || ""} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={metricaAtual.tickFormatter} />
+                    <Tooltip content={<TooltipComparacao formatar={metricaAtual.formatar} />} />
+                    {seriesGrafico.length > 1 && <Legend formatter={(_, entry) => {
+                      const s = seriesGrafico[Number(entry.dataKey.replace(metricaAtual.sufixo, "").slice(1))];
+                      return s ? `${s.mesInicio} a ${s.mesFim}` : entry.dataKey;
+                    }} />}
+                    {seriesGrafico.map((s, i) => (
+                      <Bar key={i} dataKey={"s" + i + metricaAtual.sufixo} fill={s.cor} radius={[4, 4, 0, 0]} />
+                    ))}
+                  </BarChart>
+                )}
               </ResponsiveContainer>
             </div>
           </div>

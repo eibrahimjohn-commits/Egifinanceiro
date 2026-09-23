@@ -508,3 +508,8 @@ export function herdarCondicoesDoGrupo(clientes) {
     return g ? aplicarCondicoesDoGrupo(c, condicoes[g]) : c;
   });
 }
+
+export const NOMES_MES = [
+  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+];

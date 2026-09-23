@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarResumoProdutos, listarImportacoes, buscarDetalheProduto, enriquecerCategorias, gravarCategoriasNosResumos } from "../lib/vendas";
-import { formatCurrency } from "../lib/constants";
+import { listarResumoProdutos, listarImportacoes, buscarDetalheProduto, enriquecerCategorias, gravarCategoriasNosResumos, contarMesesPeriodo } from "../lib/vendas";
+import { formatCurrency, NOMES_MES } from "../lib/constants";
 import SeletorPeriodo from "../components/SeletorPeriodo";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
+  PieChart, Pie, Legend,
 } from "recharts";
 import ModalProduto from "../components/ModalProduto";
 import GraficosSalvosLista from "../components/GraficosSalvosLista";
@@ -52,7 +53,67 @@ export default function Produtos() {
   }
   const [ordenacao, setOrdenacao] = useState("faturamento");
   const [produtoSelecionado, setProdutoSelecionado] = useState(null);
-  const [aba, setAba] = useState("painel"); // painel | salvos
+  const [aba, setAba] = useState("painel"); // painel | salvos | sazonalidade
+
+  // --- Sazonalidade: mesmas categorias comparadas ano a ano --------------
+  const [mesSaz, setMesSaz] = useState(0); // 0 = ano inteiro, 1-12 = mês específico
+  const [carregandoSaz, setCarregandoSaz] = useState(false);
+  const [dadosSaz, setDadosSaz] = useState(null); // null = ainda não gerado
+  const [anosSaz, setAnosSaz] = useState([]);
+
+  const mesesImportadosSet = new Set(importacoes.flatMap((i) => i.meses || []));
+  const todosAnosImportados = Array.from(new Set(Array.from(mesesImportadosSet).map((m) => m.slice(0, 4)))).sort();
+  // "Ano inteiro" aceita qualquer ano com pelo menos 1 mês importado (pode
+  // ficar parcial pro ano corrente); mês específico só entra o ano que TEM
+  // esse mês exato importado, senão a barra em 0 confundiria com "não vendeu".
+  const anosComEsseSaz = mesSaz === 0
+    ? todosAnosImportados
+    : todosAnosImportados.filter((ano) => mesesImportadosSet.has(`${ano}-${String(mesSaz).padStart(2, "0")}`));
+
+  const CORES_ANOS = ["var(--pink)", "var(--grape)", "var(--green)", "var(--yellow)", "#3b82f6", "#f97316"];
+
+  async function carregarSazonalidade() {
+    setCarregandoSaz(true);
+    const porAno = await Promise.all(anosComEsseSaz.map(async (ano) => {
+      const [de, ate] = mesSaz === 0 ? [`${ano}-01`, `${ano}-12`] : [`${ano}-${String(mesSaz).padStart(2, "0")}`, `${ano}-${String(mesSaz).padStart(2, "0")}`];
+      const prods = await enriquecerCategorias(await listarResumoProdutos(de, ate));
+      const porCategoria = new Map();
+      prods.forEach((p) => {
+        const cat = p.categoria || "(sem categoria)";
+        porCategoria.set(cat, (porCategoria.get(cat) || 0) + p.faturamento);
+      });
+      return { ano, porCategoria };
+    }));
+
+    // Top 6 categorias pelo total somado em todos os anos incluídos — o
+    // resto agrupa em "Outras" (senão, com muita categoria, o gráfico fica
+    // ilegível e cada barra vira uma linha fininha).
+    const totalPorCategoria = new Map();
+    porAno.forEach(({ porCategoria }) => {
+      porCategoria.forEach((v, cat) => totalPorCategoria.set(cat, (totalPorCategoria.get(cat) || 0) + v));
+    });
+    const top = Array.from(totalPorCategoria.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([cat]) => cat);
+
+    const linhas = top.map((categoria) => {
+      const linha = { categoria };
+      porAno.forEach(({ ano, porCategoria }) => { linha[ano] = porCategoria.get(categoria) || 0; });
+      return linha;
+    });
+    const sobrouAlgumaCategoria = totalPorCategoria.size > top.length;
+    if (sobrouAlgumaCategoria) {
+      const linhaOutras = { categoria: "Outras" };
+      porAno.forEach(({ ano, porCategoria }) => {
+        linhaOutras[ano] = Array.from(porCategoria.entries())
+          .filter(([cat]) => !top.includes(cat))
+          .reduce((s, [, v]) => s + v, 0);
+      });
+      linhas.push(linhaOutras);
+    }
+
+    setAnosSaz(anosComEsseSaz);
+    setDadosSaz(linhas);
+    setCarregandoSaz(false);
+  }
 
   async function carregar() {
     setCarregando(true);
@@ -60,7 +121,8 @@ export default function Produtos() {
     const chave = chaveProdutos(mesInicio, mesFim);
     const [salvo, imps] = await Promise.all([buscarGraficoSalvo(chave), listarImportacoes()]);
     setImportacoes(imps);
-    if (salvo && !graficoEstaDesatualizado(salvo, imps)) {
+    const cacheDesatualizado = salvo && (graficoEstaDesatualizado(salvo, imps) || salvo.produtos?.[0]?.mesesComVenda === undefined);
+    if (salvo && !cacheDesatualizado) {
       const doCache = await enriquecerCategorias(salvo.produtos);
       setProdutos(doCache);
       setCarregando(false);
@@ -137,6 +199,8 @@ export default function Produtos() {
     return true;
   });
   if (ordenacao === "qtd") listaFiltrada = [...listaFiltrada].sort((a, b) => b.qtd - a.qtd);
+  if (ordenacao === "meses") listaFiltrada = [...listaFiltrada].sort((a, b) => (b.mesesComVenda || 0) - (a.mesesComVenda || 0));
+  if (ordenacao === "fatMes") listaFiltrada = [...listaFiltrada].sort((a, b) => (b.faturamentoPorMesVendido || 0) - (a.faturamentoPorMesVendido || 0));
 
   // Faturamento por categoria, pra ver de cara qual linha de produto puxa mais receita.
   const porCategoria = new Map();
@@ -150,6 +214,26 @@ export default function Produtos() {
     .slice(0, 10);
 
   const temCategoria = produtos.some((p) => p.categoria);
+  const totalMesesPeriodo = contarMesesPeriodo(mesInicio, mesFim);
+
+  // Pizza de participação: por categoria (padrão) ou, se uma categoria estiver
+  // selecionada no filtro, por subcategoria DENTRO dela — mais útil que
+  // mostrar uma fatia só. Agrupa em "Outras" além das 7 maiores pra não virar
+  // uma pizza ilegível quando há dezenas de categorias.
+  const CORES_PIZZA = ["var(--pink)", "var(--grape)", "var(--green)", "var(--yellow)", "#3b82f6", "#f97316", "#14b8a6", "var(--ink-soft)"];
+  const baseParaPizza = categoriaFiltro ? produtos.filter((p) => p.categoria === categoriaFiltro) : produtos;
+  const campoPizza = categoriaFiltro ? "subcategoria" : "categoria";
+  const porFatiaMap = new Map();
+  baseParaPizza.forEach((p) => {
+    const chave = p[campoPizza] || "(sem categoria)";
+    porFatiaMap.set(chave, (porFatiaMap.get(chave) || 0) + p.faturamento);
+  });
+  const fatiasOrdenadas = Array.from(porFatiaMap.entries()).sort((a, b) => b[1] - a[1]);
+  const totalPizza = fatiasOrdenadas.reduce((s2, [, v]) => s2 + v, 0);
+  const dadosPizza = (fatiasOrdenadas.length > 8
+    ? [...fatiasOrdenadas.slice(0, 7), ["Outras", fatiasOrdenadas.slice(7).reduce((s2, [, v]) => s2 + v, 0)]]
+    : fatiasOrdenadas
+  ).map(([nome, faturamento]) => ({ nome, faturamento, percentual: totalPizza ? (faturamento / totalPizza) * 100 : 0 }));
 
   return (
     <div>
@@ -160,9 +244,66 @@ export default function Produtos() {
         <button className={"btn " + (aba === "salvos" ? "btn-primary" : "btn-ghost")} style={{ flex: 1, fontSize: 13 }} onClick={() => setAba("salvos")}>
           Gráficos salvos
         </button>
+        <button className={"btn " + (aba === "sazonalidade" ? "btn-primary" : "btn-ghost")} style={{ flex: 1, fontSize: 13 }} onClick={() => setAba("sazonalidade")}>
+          Sazonalidade
+        </button>
       </div>
 
       {aba === "salvos" && <GraficosSalvosLista tipo="produtos" onAbrir={abrirGraficoSalvo} />}
+
+      {aba === "sazonalidade" && (
+        <>
+          <div className="card">
+            <h2 className="card-title">Comparar as mesmas categorias ao longo dos anos</h2>
+            <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+              Pra cada categoria, mostra o faturamento ano a ano — dá pra ver se uma linha de produto está
+              crescendo, encolhendo ou é só sazonal (forte num mês específico todo ano).
+            </p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select className="input" style={{ width: "auto" }} value={mesSaz}
+                onChange={(e) => { setMesSaz(Number(e.target.value)); setDadosSaz(null); }}>
+                <option value={0}>Ano inteiro</option>
+                {NOMES_MES.map((nome, i) => <option key={nome} value={i + 1}>{nome}</option>)}
+              </select>
+              <button className="btn btn-primary" style={{ padding: "8px 16px" }} onClick={carregarSazonalidade}
+                disabled={carregandoSaz || anosComEsseSaz.length === 0}>
+                {carregandoSaz ? "Gerando..." : "Comparar"}
+              </button>
+              {anosComEsseSaz.length === 0 && (
+                <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>
+                  {mesSaz === 0 ? "Nenhum período importado ainda." : `Nenhum ${NOMES_MES[mesSaz - 1]} importado ainda.`}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {dadosSaz && (
+            <div className="card">
+              <h2 className="card-title">
+                {mesSaz === 0 ? "Ano inteiro" : NOMES_MES[mesSaz - 1]} — faturamento por categoria, ano a ano
+              </h2>
+              {dadosSaz.length === 0 ? (
+                <div className="empty-state">Sem dados nesse recorte.</div>
+              ) : (
+                <div style={{ width: "100%", height: Math.max(260, dadosSaz.length * 50) }}>
+                  <ResponsiveContainer>
+                    <BarChart data={dadosSaz} layout="vertical" margin={{ left: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                      <YAxis type="category" dataKey="categoria" tick={{ fontSize: 12 }} width={140} />
+                      <Tooltip formatter={(v) => formatCurrency(v)} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      {anosSaz.map((ano, i) => (
+                        <Bar key={ano} dataKey={ano} name={ano} fill={CORES_ANOS[i % CORES_ANOS.length]} radius={[0, 4, 4, 0]} />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
 
       {aba === "painel" && (
       <>
@@ -207,9 +348,29 @@ export default function Produtos() {
             </div>
           </div>
 
+          {dadosPizza.length > 1 && (
+            <div className="card">
+              <h2 className="card-title">
+                Participação {campoPizza === "subcategoria" ? `das subcategorias de ${categoriaFiltro}` : "por categoria"} no período
+              </h2>
+              <div style={{ width: "100%", height: 300 }}>
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={dadosPizza} dataKey="faturamento" nameKey="nome" cx="50%" cy="50%" outerRadius={100}
+                      label={({ percentual }) => `${percentual.toFixed(0)}%`} labelLine={false}>
+                      {dadosPizza.map((_, i) => <Cell key={i} fill={CORES_PIZZA[i % CORES_PIZZA.length]} />)}
+                    </Pie>
+                    <Tooltip formatter={(v, _n, item) => [`${formatCurrency(v)} (${item.payload.percentual.toFixed(1)}%)`, item.payload.nome]} />
+                    <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontSize: 12 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
           {dadosCategoria.length > 1 && (
             <div className="card">
-              <h2 className="card-title">Faturamento por categoria</h2>
+              <h2 className="card-title">Faturamento por categoria (top 10)</h2>
               <div style={{ width: "100%", height: 260 }}>
                 <ResponsiveContainer>
                   <BarChart data={dadosCategoria} layout="vertical" margin={{ left: 20 }}>
@@ -246,6 +407,8 @@ export default function Produtos() {
               <select className="input" value={ordenacao} onChange={(e) => setOrdenacao(e.target.value)}>
                 <option value="faturamento">Ordenar por faturamento</option>
                 <option value="qtd">Ordenar por quantidade</option>
+                <option value="meses">Ordenar por meses com venda</option>
+                <option value="fatMes">Ordenar por faturamento/mês vendido</option>
               </select>
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
@@ -281,6 +444,13 @@ export default function Produtos() {
                     <span>{p.qtd} un.</span>
                     <strong>{formatCurrency(p.faturamento)}</strong>
                   </div>
+                  {p.mesesComVenda !== undefined && (
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--ink-soft)" }}
+                      title="Meses do período em que o produto teve alguma venda. Mês sem venda pode ser falta de estoque, não falta de saída.">
+                      <span>🗓 {p.mesesComVenda}/{totalMesesPeriodo} meses vendeu</span>
+                      <span>{formatCurrency(p.faturamentoPorMesVendido)}/mês vendido</span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

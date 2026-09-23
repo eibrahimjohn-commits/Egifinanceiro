@@ -269,15 +269,37 @@ export async function listarResumoProdutos(mesInicio, mesFim) {
   const snap = await getDocsFromServer(query(resumoProdutoMesRef, where("mes", ">=", mesInicio), where("mes", "<=", mesFim)));
   const linhas = snap.docs.map((d) => d.data());
 
+  // Cada doc do resumo é UM produto em UM mês em que ele vendeu (o resumo
+  // mensal só grava produto que teve venda naquele mês — mês parado não
+  // gera doc). Por isso contar os docs por produto dá certinho "quantos
+  // meses, dentro do período escolhido, esse produto vendeu alguma coisa" —
+  // sem misturar com meses em que ele simplesmente não tinha estoque.
   const agrupado = new Map();
   linhas.forEach((l) => {
     const chave = l.codigoProduto || l.produto;
-    const atual = agrupado.get(chave) || { codigoProduto: l.codigoProduto, produto: l.produto, categoria: l.categoria, subcategoria: l.subcategoria, qtd: 0, faturamento: 0 };
+    const atual = agrupado.get(chave) || {
+      codigoProduto: l.codigoProduto, produto: l.produto, categoria: l.categoria, subcategoria: l.subcategoria,
+      qtd: 0, faturamento: 0, mesesComVenda: 0,
+    };
     atual.qtd += l.qtd;
     atual.faturamento += l.faturamento;
+    atual.mesesComVenda += 1;
     agrupado.set(chave, atual);
   });
-  return Array.from(agrupado.values()).sort((a, b) => b.faturamento - a.faturamento);
+  return Array.from(agrupado.values())
+    // Faturamento médio só nos meses em que o produto de fato vendeu — não
+    // dilui por mês parado (falta de estoque, por exemplo), que é exatamente
+    // o viés que a média simples por mês do período teria.
+    .map((p) => ({ ...p, faturamentoPorMesVendido: p.mesesComVenda ? p.faturamento / p.mesesComVenda : 0 }))
+    .sort((a, b) => b.faturamento - a.faturamento);
+}
+
+// Quantos meses o período selecionado abrange (denominador de contexto: "8
+// de 12 meses vendeu" é mais claro que só "8 meses").
+export function contarMesesPeriodo(mesInicio, mesFim) {
+  const [aIni, mIni] = mesInicio.split("-").map(Number);
+  const [aFim, mFim] = mesFim.split("-").map(Number);
+  return (aFim - aIni) * 12 + (mFim - mIni) + 1;
 }
 
 // Preenche categoria/subcategoria que ficaram em branco, cruzando o código do

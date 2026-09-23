@@ -2,6 +2,7 @@ import "./Layout.css";
 import ConnectionBadge from "./ConnectionBadge";
 import AtualizarApp from "./AtualizarApp";
 import AvisoPagamentos from "./AvisoPagamentos";
+import TarefasWidget from "./TarefasWidget";
 
 const TABS = [
   { id: "pedidos", label: "Pedidos" },
@@ -19,7 +20,10 @@ export default function Layout({ active, onChange, wide, full, children }) {
   return (
     <div className="layout">
       <header className="topbar">
-        <span className="brand">EGI <span className="brand-accent">Financeiro</span></span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span className="brand">EGI <span className="brand-accent">Financeiro</span></span>
+          <TarefasWidget />
+        </div>
         <AvisoPagamentos onIr={() => onChange("pagamentos")} />
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <AtualizarApp />
