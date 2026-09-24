@@ -69,6 +69,11 @@ function agruparPorCliente(lista, clientesPorId = {}) {
         totalDevido: 0,
         totalPago: 0,
         dataMaisRecente: p.data,
+        // Data do pedido em aberto mais antigo do grupo — não do último
+        // pedido lançado. É o que importa pra "quem está esperando pagar há
+        // mais tempo": um cliente pode ter comprado ontem e ainda dever de
+        // 3 meses atrás; ordenar pelo último pedido escondia esse caso.
+        dataMaisAntigaAberto: saldoDoPedido(p) > 0.01 ? p.data : undefined,
         atrasado: false,
       });
     }
@@ -80,6 +85,9 @@ function agruparPorCliente(lista, clientesPorId = {}) {
     g.totalDevido += valorDevidoDoPedido(p);
     g.totalPago += valorPagoDoPedido(p);
     if (new Date(p.data) > new Date(g.dataMaisRecente)) g.dataMaisRecente = p.data;
+    if (saldoDoPedido(p) > 0.01 && (!g.dataMaisAntigaAberto || new Date(p.data) < new Date(g.dataMaisAntigaAberto))) {
+      g.dataMaisAntigaAberto = p.data;
+    }
     if (pedidoEstaAtrasado(p, clientesPorId[p.clienteId])) g.atrasado = true;
   });
   return Array.from(grupos.values()).map((g) => {
@@ -271,12 +279,12 @@ function DetalheExpandido({
         <div className="card" style={{ background: "var(--bg)" }}>
           <h3 style={{ fontSize: 14, marginBottom: 10 }}>Registrar pagamento</h3>
           {pedidosComSaldo.length === 1 ? (
-            <button className="btn btn-primary btn-block" onClick={() => onAbrirBaixa(pedidosComSaldo[0])}>
+            <button className="btn btn-primary btn-block" onClick={() => onAbrirBaixa(pedidosComSaldo[0], pedidosComSaldo)}>
               Registrar pagamento de {formatCurrency(saldoDoPedido(pedidosComSaldo[0]))}
             </button>
           ) : (
             pedidosComSaldo.map((p) => (
-              <div key={p.id} className="list-item" onClick={() => onAbrirBaixa(p)}>
+              <div key={p.id} className="list-item" onClick={() => onAbrirBaixa(p, pedidosComSaldo)}>
                 <div>
                   <strong>{formatDate(p.data)}</strong>
                   <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
@@ -649,6 +657,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const [expandidos, setExpandidos] = useState(new Set());
 
   const [pedidoBaixa, setPedidoBaixa] = useState(null);
+  const [pedidosIrmaosComSaldo, setPedidosIrmaosComSaldo] = useState([]);
   const [valorBaixa, setValorBaixa] = useState("");
   const [dataBaixa, setDataBaixa] = useState(todayISO());
   const [formaBaixa, setFormaBaixa] = useState("pix_ted");
@@ -770,10 +779,14 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     return soma + contribuicao30Dias(saldo, clientesPorId[p.clienteId]?.prazo ?? p.clientePrazo);
   }, 0);
 
+  // "Data (antiga)" ordena pelo pedido em aberto mais antigo do cliente;
+  // "Data (recente)" continua pelo último pedido lançado.
+  const campoDataVales = (g) => (ordenacao === "data_asc" ? (g.dataMaisAntigaAberto ?? g.dataMaisRecente) : g.dataMaisRecente);
+
   const gruposVales = aplicarFiltroOrdenacao(
     agruparPorCliente(pedidosVales, clientesPorId),
     (g) => nomeExibicao(g),
-    (g) => g.dataMaisRecente,
+    campoDataVales,
     (g) => g.saldo,
     (g) => g.percentual,
     (g) => g.representante
@@ -800,7 +813,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
   const itensValesTodos = aplicarFiltroOrdenacao(
     [...agruparPorCliente(pedidosVales, clientesPorId), ...chequesDevVales],
     (x) => (x.ehChequeDev ? (x.representante ? `${x.nome} (${x.representante})` : x.nome) : nomeExibicao(x)),
-    (x) => (x.ehChequeDev ? x.cheque.dataRegistro : x.dataMaisRecente),
+    (x) => (x.ehChequeDev ? x.cheque.dataRegistro : campoDataVales(x)),
     (x) => x.saldo,
     (x) => x.percentual,
     (x) => x.representante
@@ -851,9 +864,14 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     (p) => representanteAtualDoPedido(p)
   );
 
-  function abrirBaixa(pedido) {
+  function abrirBaixa(pedido, todosComSaldo = []) {
     const saldo = saldoDoPedido(pedido);
     setPedidoBaixa(pedido);
+    // Outros pedidos do mesmo cliente ainda em aberto — se o valor digitado
+    // for maior que o saldo deste pedido, oferecemos aplicar a diferença
+    // neles em vez de deixar o excesso "sobrando" só neste (o que fechava
+    // um pedido e deixava o outro parado pra sempre, sem ir pra comissão).
+    setPedidosIrmaosComSaldo(todosComSaldo.filter((p) => p.id !== pedido.id));
     setValorBaixa(saldo.toFixed(2));
     setDataBaixa(todayISO());
     setFormaBaixa("pix_ted");
@@ -893,17 +911,66 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
       mostrarToast("Informe de quem é a conta");
       return;
     }
-    const parcelas = ehCheque ? parcelasDaBaixa() : null;
-    await registrarBaixa(pedidoBaixa.id, pedidoBaixa, {
-      valor: Number(valorBaixa),
+
+    const valorDigitado = Number(valorBaixa);
+    const saldoPedidoAtual = saldoDoPedido(pedidoBaixa);
+    const excedente = valorDigitado - saldoPedidoAtual;
+
+    const dadosBase = {
       data: dataBaixa,
       formaPagamento: formaBaixa,
       conta: FORMAS_COM_CONTA.includes(formaBaixa) ? montarConta(contaBaixa, contaBaixaId) : null,
-      ...(ehCheque ? { numFolhas: Number(numFolhasBaixa), prazoUltimoCheque: prazoUltimoChequeBaixa, parcelas } : {}),
       ...(formaBaixa === "conta_terceiros" ? { descricao: descricaoBaixa.trim() } : {}),
-    });
-    mostrarToast("Pagamento registrado!");
+    };
+    // Parcelas de cheque: no caso normal (sem dividir com outro pedido),
+    // respeita qualquer folha que o usuário tenha editado manualmente. Só
+    // quando o valor É dividido entre pedidos é que recalculamos as folhas
+    // a partir de cada valor aplicado — a edição manual foi feita em cima
+    // do total digitado e não tem como ser dividida de volta com sentido.
+    function comParcelas(dados, valor, recalcularDoZero) {
+      if (!ehCheque) return dados;
+      const parcelas = recalcularDoZero ? calcularParcelasCheque(prazoUltimoChequeBaixa, numFolhasBaixa, valor) : parcelasDaBaixa();
+      return { ...dados, numFolhas: Number(numFolhasBaixa), prazoUltimoCheque: prazoUltimoChequeBaixa, parcelas };
+    }
+
+    // Sobrou valor além do que ESTE pedido deve, e tem outro pedido do mesmo
+    // cliente em aberto: pergunta se aplica a diferença nele(s) — é
+    // exatamente o caso de registrar de uma vez o total de dois pedidos.
+    let aplicarNosIrmaos = false;
+    if (excedente > 0.01 && pedidosIrmaosComSaldo.length > 0) {
+      aplicarNosIrmaos = window.confirm(
+        `O valor digitado é ${formatCurrency(excedente)} maior que o saldo deste pedido (${formatCurrency(saldoPedidoAtual)}).
+
+` +
+        `Aplicar a diferença no(s) outro(s) pedido(s) em aberto de ${pedidoBaixa.clienteNome || "este cliente"}?`
+      );
+    }
+
+    if (aplicarNosIrmaos) {
+      let resto = valorDigitado;
+      const valorNesteAgora = Math.min(resto, saldoPedidoAtual);
+      await registrarBaixa(pedidoBaixa.id, pedidoBaixa, { ...comParcelas(dadosBase, valorNesteAgora, true), valor: valorNesteAgora });
+      resto -= valorNesteAgora;
+
+      const irmaosOrdenados = [...pedidosIrmaosComSaldo].sort((a, b) => new Date(a.data) - new Date(b.data));
+      for (const irmao of irmaosOrdenados) {
+        if (resto <= 0.01) break;
+        const saldoIrmao = saldoDoPedido(irmao);
+        const valorIrmao = Math.min(resto, saldoIrmao);
+        // eslint-disable-next-line no-await-in-loop -- baixas em sequência, uma depende da anterior já ter sido gravada
+        await registrarBaixa(irmao.id, irmao, { ...comParcelas(dadosBase, valorIrmao, true), valor: valorIrmao });
+        resto -= valorIrmao;
+      }
+      mostrarToast(resto > 0.01
+        ? `Pagamento registrado! Sobrou ${formatCurrency(resto)} sem pedido em aberto desse cliente pra aplicar.`
+        : "Pagamento registrado nos pedidos em aberto desse cliente!");
+    } else {
+      await registrarBaixa(pedidoBaixa.id, pedidoBaixa, { ...comParcelas(dadosBase, valorDigitado, false), valor: valorDigitado });
+      mostrarToast("Pagamento registrado!");
+    }
+
     setPedidoBaixa(null);
+    setPedidosIrmaosComSaldo([]);
     carregar({ silencioso: true });
   }
 
@@ -1148,7 +1215,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
                 <DetalheExpandido
                   g={g}
                   clientesPorId={clientesPorId} chequesDevolvidos={todosChequesDevolvidos}
-                  pedidoBaixa={pedidoBaixa} onAbrirBaixa={abrirBaixa} onCancelarBaixa={() => setPedidoBaixa(null)} onConfirmarBaixa={confirmarBaixa}
+                  pedidoBaixa={pedidoBaixa} onAbrirBaixa={abrirBaixa} onCancelarBaixa={() => { setPedidoBaixa(null); setPedidosIrmaosComSaldo([]); }} onConfirmarBaixa={confirmarBaixa}
                   valorBaixa={valorBaixa} setValorBaixa={setValorBaixa} dataBaixa={dataBaixa} setDataBaixa={setDataBaixa}
                   formaBaixa={formaBaixa} setFormaBaixa={setFormaBaixa}
                   numFolhasBaixa={numFolhasBaixa} setNumFolhasBaixa={setNumFolhasBaixa}

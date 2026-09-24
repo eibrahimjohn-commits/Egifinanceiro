@@ -41,9 +41,20 @@ export function dividirValorIgualmente(valorTotal, numParcelas) {
 // Data local (não UTC) daqui a N dias, no formato AAAA-MM-DD. Usar
 // toISOString direto dava o dia seguinte depois das 21h (fuso de Brasília).
 export function dataDaquiDias(dias, base = new Date()) {
-  const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dias);
+  // dias pode chegar NaN (ex: vindo de uma data ainda inválida/vazia sendo
+  // digitada) — sem essa guarda, toISOString() de uma Data inválida
+  // derrubava a tela inteira (sem ErrorBoundary, um erro de render em
+  // qualquer componente apaga a página toda). Nesse caso trata como 0 dias.
+  const diasSeguro = Number.isFinite(dias) ? dias : 0;
+  const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + diasSeguro);
   const tz = d.getTimezoneOffset() * 60000;
   return new Date(d - tz).toISOString().slice(0, 10);
+}
+
+// true se a string representa uma data válida (o campo de data pode chegar
+// vazio ou pela metade enquanto o usuário ainda está digitando).
+function dataValida(iso) {
+  return Boolean(iso) && !Number.isNaN(new Date(iso + "T00:00:00").getTime());
 }
 
 // Prazo padrão do último cheque: 30 dias por folha (1 folha = 30 dias,
@@ -60,7 +71,11 @@ export function calcularParcelasCheque(prazoUltimoCheque, numFolhas, valorTotal)
   const valores = dividirValorIgualmente(valorTotal, n);
   const hoje = new Date();
   const hojeMeiaNoite = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
-  const dataFinal = new Date(prazoUltimoCheque + "T00:00:00");
+  // Prazo ainda vazio/inválido (usuário apagou o campo pra redigitar): usa o
+  // padrão de 30 dias por folha nesse meio-tempo, em vez de travar a tela —
+  // assim que uma data válida for digitada, volta a calcular normalmente.
+  const prazoSeguro = dataValida(prazoUltimoCheque) ? prazoUltimoCheque : prazoPadraoUltimoCheque(n);
+  const dataFinal = new Date(prazoSeguro + "T00:00:00");
   const diasAteFinal = Math.max(0, Math.round((dataFinal - hojeMeiaNoite) / 86400000));
   const diasPrimeiro = Math.min(30, diasAteFinal);
   const passo = n > 1 ? (diasAteFinal - diasPrimeiro) / (n - 1) : 0;
@@ -77,7 +92,7 @@ export function calcularParcelasCheque(prazoUltimoCheque, numFolhas, valorTotal)
 // empurrada mantendo 30 dias por folha.
 export function redistribuirDatasCheque(parcelas, index, novaData) {
   const n = parcelas.length;
-  if (!novaData || n === 0) return parcelas;
+  if (!dataValida(novaData) || n === 0) return parcelas;
   const ultimo = n - 1;
   if (n === 1 || (index !== 0 && index !== ultimo)) {
     return parcelas.map((p, i) => (i === index ? { ...p, data: novaData } : p));

@@ -133,15 +133,35 @@ async function lerCatalogoPortal() {
   try {
     const snap = await comTimeout(getDocsFromServer(collection(dbPortal(), "products")), 8000);
     const porCodigo = {};
+    const porNome = {};
     snap.docs.forEach((d) => {
       const p = d.data();
-      if (p.code) porCodigo[String(p.code).trim()] = { categoria: p.category || "", subcategoria: p.subcategory || "" };
+      const info = { categoria: p.category || "", subcategoria: p.subcategory || "" };
+      if (p.code) porCodigo[String(p.code).trim()] = info;
+      // O nome/descrição pode vir em campos diferentes dependendo de como
+      // aquele produto foi cadastrado no Portal — tenta os mais prováveis.
+      const nome = p.name || p.nome || p.title || p.descricao || p.description || "";
+      const chaveNome = slug(nome);
+      // Primeiro produto com aquele nome vence em caso de nome duplicado —
+      // igual o comportamento de código repetido, que também ficava com o
+      // primeiro que aparecesse no snapshot.
+      if (chaveNome !== "sem-nome" && !porNome[chaveNome]) porNome[chaveNome] = info;
     });
-    return porCodigo;
+    return { porCodigo, porNome };
   } catch (e) {
     console.warn("Não consegui buscar o catálogo do Portal (ou demorou demais) — seguindo sem categoria.", e);
-    return {};
+    return { porCodigo: {}, porNome: {} };
   }
+}
+
+// Cruza um produto do nosso histórico com o catálogo do Portal: primeiro
+// tenta pelo código (mais confiável, quando os dois sistemas usam o mesmo
+// SKU); se não achar, tenta pelo nome/descrição normalizado — cobre o caso
+// de os códigos não baterem entre os dois sistemas, desde que a descrição
+// seja parecida o bastante pra bater depois de tirar acento/maiúscula/pontuação.
+function buscarNoCatalogo(catalogo, codigo, nome) {
+  const codigoLimpo = String(codigo || "").trim();
+  return (codigoLimpo && catalogo.porCodigo[codigoLimpo]) || catalogo.porNome[slug(nome)] || null;
 }
 
 // Grava as linhas (idempotente: ID determinístico por pedido+posição, então
@@ -173,12 +193,15 @@ async function gravarEmLotesParalelo(itens, referencia, montarId, aoProgredir) {
 export async function importarPlanilhaVendas(linhas, nomeArquivo, aoProgredir) {
   const catalogo = await buscarCatalogoPortal();
 
-  const comEnriquecimento = linhas.map((l, i) => ({
-    ...l,
-    categoria: catalogo[l.codigoProduto]?.categoria || "",
-    subcategoria: catalogo[l.codigoProduto]?.subcategoria || "",
-    _indice: i, // usado só pra montar um ID de documento único, não é gravado como veio
-  }));
+  const comEnriquecimento = linhas.map((l, i) => {
+    const doCatalogo = buscarNoCatalogo(catalogo, l.codigoProduto, l.produto);
+    return {
+      ...l,
+      categoria: doCatalogo?.categoria || "",
+      subcategoria: doCatalogo?.subcategoria || "",
+      _indice: i, // usado só pra montar um ID de documento único, não é gravado como veio
+    };
+  });
 
   await gravarEmLotesParalelo(
     comEnriquecimento, linhasRef,
@@ -310,10 +333,10 @@ export async function enriquecerCategorias(produtos) {
   if (!produtos?.length) return produtos || [];
   if (produtos.every((p) => p.categoria)) return produtos;
   const catalogo = await buscarCatalogoPortal();
-  if (!Object.keys(catalogo).length) return produtos;
+  if (!Object.keys(catalogo.porCodigo).length && !Object.keys(catalogo.porNome).length) return produtos;
   return produtos.map((p) => {
     if (p.categoria) return p;
-    const doCatalogo = catalogo[String(p.codigoProduto || "").trim()];
+    const doCatalogo = buscarNoCatalogo(catalogo, p.codigoProduto, p.produto);
     return doCatalogo ? { ...p, categoria: doCatalogo.categoria, subcategoria: doCatalogo.subcategoria } : p;
   });
 }
@@ -328,10 +351,10 @@ export async function gravarCategoriasNosResumos(mesInicio, mesFim) {
   if (!semCategoria.length) return 0;
 
   const catalogo = await buscarCatalogoPortal();
-  if (!Object.keys(catalogo).length) return 0;
+  if (!Object.keys(catalogo.porCodigo).length && !Object.keys(catalogo.porNome).length) return 0;
 
   const paraAtualizar = semCategoria
-    .map((d) => ({ ref: d.ref, doCatalogo: catalogo[String(d.data().codigoProduto || "").trim()] }))
+    .map((d) => ({ ref: d.ref, doCatalogo: buscarNoCatalogo(catalogo, d.data().codigoProduto, d.data().produto) }))
     .filter((x) => x.doCatalogo && (x.doCatalogo.categoria || x.doCatalogo.subcategoria));
   if (!paraAtualizar.length) return 0;
 
