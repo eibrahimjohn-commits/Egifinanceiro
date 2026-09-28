@@ -440,7 +440,28 @@ export function primeiroNome(nome) {
   return palavra ? palavra.charAt(0).toLocaleUpperCase("pt-BR") + palavra.slice(1).toLocaleLowerCase("pt-BR") : "";
 }
 
-export function linkWhatsAppInativo(telefone, nomeCliente) {
+// Grupo de novidades no WhatsApp: só quem NUNCA entrou ("nao") recebe o
+// convite no final da mensagem de clientes inativos. Quem já está ("sim") ou
+// quem saiu ("saiu") não recebe — quem saiu não é reconvidado.
+export const LINK_GRUPO_WHATSAPP = "https://chat.whatsapp.com/Gc17Umb582s6YTzXoyWjKm?s=cl&p=a&mlu=4";
+
+export const STATUS_GRUPO_WHATSAPP = [
+  { value: "nao", label: "Não está no grupo" },
+  { value: "sim", label: "Já está no grupo" },
+  { value: "saiu", label: "Saiu do grupo" },
+];
+
+// Status do GRUPO de clientes (ou do cliente sozinho): basta um cadastro
+// estar marcado como "sim" pra considerar que já está. Sem marcação = "nao"
+// (todo mundo começa fora do grupo).
+export function statusGrupoWhatsappDe(clientes) {
+  const status = clientes.map((c) => c.grupoWhatsapp || "nao");
+  if (status.includes("sim")) return "sim";
+  if (status.includes("saiu")) return "saiu";
+  return "nao";
+}
+
+export function linkWhatsAppInativo(telefone, nomeCliente, convidarParaGrupo = false) {
   const { numero: normalizado } = normalizarTelefone(telefone);
   let digitos = String(normalizado || telefone || "").replace(/\D/g, "");
   if (digitos.length <= 11) digitos = "55" + digitos; // adiciona DDI Brasil se faltar
@@ -448,7 +469,10 @@ export function linkWhatsAppInativo(telefone, nomeCliente) {
     `Olá${primeiroNome(nomeCliente) ? " " + primeiroNome(nomeCliente) : ""}, tudo bem?\n` +
     `Percebi que faz um tempo que não compra com a gente, como foi a saída do último pedido? ` +
     `Posso estar enviando nosso novo catálogo com muitas novidades? 😁\n` +
-    `Aguardo retorno`;
+    `Aguardo retorno` +
+    (convidarParaGrupo
+      ? `\n\nAproveito e deixo um convite a fazer parte do nosso grupo de novidades!\n\n${LINK_GRUPO_WHATSAPP}`
+      : "");
   return `https://wa.me/${digitos}?text=${encodeURIComponent(mensagem)}`;
 }
 

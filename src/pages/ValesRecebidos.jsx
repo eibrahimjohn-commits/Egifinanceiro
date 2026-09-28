@@ -119,7 +119,7 @@ function DetalheExpandido({
   valorBaixa, setValorBaixa, dataBaixa, setDataBaixa, formaBaixa, setFormaBaixa,
   contaBaixa, setContaBaixa, contaBaixaId, setContaBaixaId,
   numFolhasBaixa, setNumFolhasBaixa, prazoUltimoChequeBaixa, setPrazoUltimoChequeBaixa,
-  parcelasBaixaManual, parcelasDaBaixa, onEditarParcelaBaixa, onRecalcularParcelasBaixa,
+  parcelasBaixaManual, parcelasDaBaixa, onEditarParcelaBaixa, onConfirmarDataParcelaBaixa, onRecalcularParcelasBaixa,
   descricaoBaixa, setDescricaoBaixa,
   editandoItem, onAbrirEdicaoItem, onCancelarEdicaoItem, onSalvarEdicaoItem,
   onSetValorEditandoItem, onSetDataEditandoItem, onExcluirCompra,
@@ -346,24 +346,32 @@ function DetalheExpandido({
                   <label>Prazo do último cheque</label>
                   <input className="input" type="date" value={prazoUltimoChequeBaixa}
                     onChange={(e) => {
-                      // Com folhas já ajustadas, mudar o prazo só move a última e
-                      // redistribui as do meio (preserva a data da primeira).
+                      // Digitando: só ecoa o valor bruto, sem redistribuir —
+                      // mesma lógica das folhas abaixo, pro campo não brigar
+                      // com o teclado nativo enquanto o ano ainda não fechou.
                       if (parcelasBaixaManual) onEditarParcelaBaixa(parcelasBaixaManual.length - 1, "data", e.target.value);
                       else setPrazoUltimoChequeBaixa(e.target.value);
+                    }}
+                    onBlur={(e) => {
+                      // Com folhas já ajustadas, mudar o prazo só move a
+                      // última e redistribui as do meio (preserva a
+                      // primeira) — só quando termina de digitar.
+                      if (parcelasBaixaManual) onConfirmarDataParcelaBaixa(parcelasBaixaManual.length - 1, e.target.value);
                     }} />
                 </div>
               </div>
               {valorBaixa && prazoUltimoChequeBaixa && Number(numFolhasBaixa) > 0 && (
                 <div style={{ background: "white", borderRadius: 10, padding: 10, marginBottom: 12 }}>
                   {parcelasDaBaixa().map((p, pi) => (
-                    <div key={p.numero} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                    <div key={p.numero} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
                       <span style={{ fontSize: 12, color: "var(--ink-soft)", flexShrink: 0, width: 32 }}>N°{p.numero}</span>
                       <input className="input" type="number" step="0.01" value={p.valor}
                         onChange={(e) => onEditarParcelaBaixa(pi, "valor", e.target.value)}
-                        style={{ flex: 1, padding: "6px 8px", fontSize: 13 }} />
+                        style={{ flex: "1 1 90px", minWidth: 90, padding: "6px 8px", fontSize: 13 }} />
                       <input className="input" type="date" value={p.data}
                         onChange={(e) => onEditarParcelaBaixa(pi, "data", e.target.value)}
-                        style={{ flex: 1, padding: "6px 8px", fontSize: 13 }} />
+                        onBlur={(e) => onConfirmarDataParcelaBaixa(pi, e.target.value)}
+                        style={{ flex: "1 1 130px", minWidth: 130, padding: "6px 8px", fontSize: 13 }} />
                     </div>
                   ))}
                   {parcelasBaixaManual && (
@@ -887,14 +895,26 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     return parcelasBaixaManual || calcularParcelasCheque(prazoUltimoChequeBaixa, numFolhasBaixa, valorBaixa);
   }
 
+  // Enquanto digita: só grava o texto bruto daquela folha, sem redistribuir
+  // nada. O campo de data nativo dispara onChange a cada dígito do ano —
+  // inclusive com o ano pela metade (ex: "0020" antes de virar "2026") — e
+  // redistribuir a cada uma dessas teclas usava esse valor incompleto como
+  // base da tecla seguinte, deformando a data cada vez mais a cada dígito
+  // (foi exatamente esse acúmulo que gerou datas como 27/08/1920). Value
+  // segue direto: não tem efeito colateral em outra folha, então não precisa
+  // esperar o campo perder o foco.
   function editarParcelaBaixa(index, campo, valor) {
     const base = parcelasDaBaixa();
-    const novas = campo === "data"
-      ? redistribuirDatasCheque(base, index, valor)
-      : base.map((p, i) => (i === index ? { ...p, valor: Number(valor) } : p));
+    const novas = base.map((p, i) => (i === index ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p));
     setParcelasBaixaManual(novas);
-    // mantém o campo "Prazo do último cheque" igual à data da última folha
-    if (campo === "data" && novas.length) setPrazoUltimoChequeBaixa(novas[novas.length - 1].data);
+  }
+
+  // Só ao sair do campo de data (ano completo, digitação terminada) é que
+  // redistribui as folhas vizinhas — uma vez só, nunca no meio da digitação.
+  function confirmarDataParcelaBaixa(index, valorFinal) {
+    const novas = redistribuirDatasCheque(parcelasDaBaixa(), index, valorFinal);
+    setParcelasBaixaManual(novas);
+    if (novas.length) setPrazoUltimoChequeBaixa(novas[novas.length - 1].data);
   }
 
   async function confirmarBaixa() {
@@ -1221,7 +1241,7 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
                   numFolhasBaixa={numFolhasBaixa} setNumFolhasBaixa={setNumFolhasBaixa}
                   prazoUltimoChequeBaixa={prazoUltimoChequeBaixa} setPrazoUltimoChequeBaixa={setPrazoUltimoChequeBaixa}
                   parcelasBaixaManual={parcelasBaixaManual} parcelasDaBaixa={parcelasDaBaixa}
-                  onEditarParcelaBaixa={editarParcelaBaixa} onRecalcularParcelasBaixa={() => setParcelasBaixaManual(null)}
+                  onEditarParcelaBaixa={editarParcelaBaixa} onConfirmarDataParcelaBaixa={confirmarDataParcelaBaixa} onRecalcularParcelasBaixa={() => setParcelasBaixaManual(null)}
                   descricaoBaixa={descricaoBaixa} setDescricaoBaixa={setDescricaoBaixa}
                   editandoItem={editandoItem} onAbrirEdicaoItem={abrirEdicaoItem} onCancelarEdicaoItem={() => setEditandoItem(null)}
                   onSalvarEdicaoItem={salvarEdicaoItem}

@@ -296,19 +296,29 @@ export default function Pedidos() {
     return f.parcelasManual || calcularParcelasCheque(f.prazoUltimoCheque, f.numFolhas, f.valorTotal);
   }
 
-  // Mudar a data da primeira ou da última folha redistribui as do meio
-  // igualmente entre as duas; folha do meio muda só ela.
+  // Enquanto digita: só grava o texto bruto daquela folha, sem redistribuir
+  // — o campo de data nativo dispara onChange a cada dígito do ano (mesmo
+  // incompleto), e redistribuir a cada tecla usava esse valor pela metade
+  // como base da tecla seguinte, deformando a data cada vez mais.
   function atualizarParcela(i, parcelaIndex, campo, valor) {
     setFormas((arr) => arr.map((f, idx) => {
       if (idx !== i) return f;
       const base = parcelasDaForma(f);
-      const novasParcelas = campo === "data"
-        ? redistribuirDatasCheque(base, parcelaIndex, valor)
-        : base.map((p, pi) => (pi === parcelaIndex ? { ...p, valor: Number(valor) } : p));
+      const novasParcelas = base.map((p, pi) => (pi === parcelaIndex ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p));
+      return { ...f, parcelasManual: novasParcelas };
+    }));
+  }
+
+  // Só ao sair do campo de data (digitação terminada) redistribui as folhas
+  // vizinhas — uma vez só, nunca no meio da digitação.
+  function confirmarDataParcela(i, parcelaIndex, valorFinal) {
+    setFormas((arr) => arr.map((f, idx) => {
+      if (idx !== i) return f;
+      const novasParcelas = redistribuirDatasCheque(parcelasDaForma(f), parcelaIndex, valorFinal);
       return {
         ...f,
         parcelasManual: novasParcelas,
-        ...(campo === "data" && novasParcelas.length ? { prazoUltimoCheque: novasParcelas[novasParcelas.length - 1].data } : {}),
+        ...(novasParcelas.length ? { prazoUltimoCheque: novasParcelas[novasParcelas.length - 1].data } : {}),
       };
     }));
   }
@@ -753,19 +763,21 @@ export default function Pedidos() {
                   <input className="input" type="date" value={f.prazoUltimoCheque}
                     onChange={(e) => (f.parcelasManual
                       ? atualizarParcela(i, f.parcelasManual.length - 1, "data", e.target.value)
-                      : updateForma(i, "prazoUltimoCheque", e.target.value))} />
+                      : updateForma(i, "prazoUltimoCheque", e.target.value))}
+                    onBlur={(e) => { if (f.parcelasManual) confirmarDataParcela(i, f.parcelasManual.length - 1, e.target.value); }} />
                 </div>
                 {f.valorTotal && f.prazoUltimoCheque && Number(f.numFolhas) > 0 && (
                   <div style={{ marginTop: 4 }}>
                     {parcelasDaForma(f).map((p, pi) => (
-                      <div key={p.numero} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                      <div key={p.numero} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
                         <span style={{ fontSize: 13, color: "var(--ink-soft)", flexShrink: 0, width: 34 }}>N°{p.numero}</span>
                         <input className="input" type="number" step="0.01" value={p.valor}
                           onChange={(e) => atualizarParcela(i, pi, "valor", e.target.value)}
-                          style={{ flex: 1 }} />
+                          style={{ flex: "1 1 90px", minWidth: 90 }} />
                         <input className="input" type="date" value={p.data}
                           onChange={(e) => atualizarParcela(i, pi, "data", e.target.value)}
-                          style={{ flex: 1 }} />
+                          onBlur={(e) => confirmarDataParcela(i, pi, e.target.value)}
+                          style={{ flex: "1 1 130px", minWidth: 130 }} />
                       </div>
                     ))}
                     {f.parcelasManual && (

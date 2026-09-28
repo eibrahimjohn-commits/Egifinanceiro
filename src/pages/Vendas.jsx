@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
 import {
-  lerPlanilhaVendas, importarPlanilhaVendas, listarImportacoes,
+  lerPlanilhaVendas, importarPlanilhaVendas, listarImportacoes, removerRegistroImportacao, excluirDadosImportacao,
   listarResumoDiario, listarResumoClientes,
 } from "../lib/vendas";
 import { formatCurrency, formatDate, NOMES_MES } from "../lib/constants";
@@ -75,6 +75,7 @@ export default function Vendas() {
   const [importando, setImportando] = useState(false);
   const [progresso, setProgresso] = useState(null);
   const [erro, setErro] = useState("");
+  const [excluindoImportacao, setExcluindoImportacao] = useState(null); // id em andamento
   const [toast, setToast] = useState("");
 
   const estadoInicial = carregarEstadoSalvo();
@@ -213,7 +214,8 @@ export default function Vendas() {
         setErro("Não encontrei nenhuma linha válida nessa planilha.");
         return;
       }
-      setPreview({ linhas, ignoradas, meses, nomeArquivo: file.name });
+      const jaImportado = importacoes.find((imp) => imp.nomeArquivo?.trim().toLowerCase() === file.name.trim().toLowerCase());
+      setPreview({ linhas, ignoradas, meses, nomeArquivo: file.name, jaImportado });
     } catch (err) {
       setErro(err.message);
     } finally {
@@ -221,8 +223,55 @@ export default function Vendas() {
     }
   }
 
+  async function excluirEReimportar(importacao) {
+    setExcluindoImportacao(importacao.id);
+    try {
+      await excluirDadosImportacao(importacao);
+      await carregarImportacoes();
+      setPreview((p) => (p ? { ...p, jaImportado: null } : p));
+      mostrarToast("Importação antiga removida — agora é só confirmar de novo.");
+    } catch (err) {
+      mostrarToast("Erro ao excluir: " + err.message);
+    } finally {
+      setExcluindoImportacao(null);
+    }
+  }
+
+  async function removerRegistro(id) {
+    if (!window.confirm("Remover esse registro da lista? Isso não apaga nenhum dado, só o registro da importação.")) return;
+    setExcluindoImportacao(id);
+    try {
+      await removerRegistroImportacao(id);
+      await carregarImportacoes();
+    } catch (err) {
+      mostrarToast("Erro ao remover: " + err.message);
+    } finally {
+      setExcluindoImportacao(null);
+    }
+  }
+
+  async function excluirDados(importacao) {
+    const aviso = `Apagar os dados de "${importacao.nomeArquivo}" (${importacao.linhasProcessadas} linhas, meses: ${importacao.meses?.join(", ")})?\n\n` +
+      `Se essa importação for anterior ao controle por arquivo (bem antiga), não dá pra apagar só ela — nesse caso isso apaga TODOS os dados desse(s) mês(es), incluindo os de qualquer outro arquivo que cubra o mesmo período.\n\n` +
+      `Essa ação não tem volta.`;
+    if (!window.confirm(aviso)) return;
+    setExcluindoImportacao(importacao.id);
+    try {
+      const resultado = await excluirDadosImportacao(importacao);
+      mostrarToast(resultado.legado
+        ? `Dados do(s) mês(es) apagados e recalculados (${resultado.linhasApagadas} linhas).`
+        : `Dados dessa importação apagados (${resultado.linhasApagadas} linhas).`);
+      await carregarImportacoes();
+      carregarDashboard();
+    } catch (err) {
+      mostrarToast("Erro ao excluir: " + err.message);
+    } finally {
+      setExcluindoImportacao(null);
+    }
+  }
+
   async function confirmarImportacao() {
-    if (!preview) return;
+    if (!preview || preview.jaImportado) return;
     setImportando(true);
     setProgresso({ feito: 0, total: preview.linhas.length });
     // Rede de segurança: se QUALQUER etapa travar sem erro (mesmo com os
@@ -395,6 +444,8 @@ export default function Vendas() {
         <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
           Planilha com Data, Nº Pedido, Produto, Código, Cliente, Quantidade, Unidade, Valor Unitário e
           Valor Total. Pode importar aos poucos (por trimestre ou ano) — reimportar o mesmo período não duplica nada.
+          Um arquivo com o mesmo nome de um já importado não é aceito de novo; exclua o antigo primeiro se
+          precisar reimportar.
         </p>
         <input type="file" accept=".xls,.xlsx,.csv" onChange={handleArquivo} disabled={importando} />
 
@@ -412,7 +463,21 @@ export default function Vendas() {
             <div style={{ fontSize: 13, marginBottom: 10 }}>
               Faturamento nesse arquivo: <strong>{formatCurrency(preview.linhas.reduce((s, l) => s + l.valorTotal, 0))}</strong>
             </div>
-            {importando ? (
+            {preview.jaImportado ? (
+              <div style={{ background: "var(--yellow-light)", borderRadius: 8, padding: 10, fontSize: 13 }}>
+                Um arquivo chamado <strong>{preview.jaImportado.nomeArquivo}</strong> já foi importado
+                ({preview.jaImportado.linhasProcessadas} linhas). Pra reimportar, exclua os dados da
+                importação antiga primeiro.
+                <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                  <button className="btn btn-danger" style={{ padding: "6px 12px", fontSize: 13 }}
+                    disabled={excluindoImportacao === preview.jaImportado.id}
+                    onClick={() => excluirEReimportar(preview.jaImportado)}>
+                    {excluindoImportacao === preview.jaImportado.id ? "Excluindo..." : "Excluir a antiga e liberar reimportação"}
+                  </button>
+                  <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 13 }} onClick={() => setPreview(null)}>Cancelar</button>
+                </div>
+              </div>
+            ) : importando ? (
               <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
                 {progresso ? `Importando... ${progresso.feito} / ${progresso.total}` : "Buscando categorias no Portal de Vendas (até 8s)..."}
               </div>
@@ -432,8 +497,20 @@ export default function Vendas() {
             </summary>
             <div style={{ marginTop: 8 }}>
               {importacoes.map((imp) => (
-                <div key={imp.id} style={{ fontSize: 13, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                  {imp.nomeArquivo} · {imp.linhasProcessadas} linhas · meses: {imp.meses?.join(", ")}
+                <div key={imp.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 13, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span>{imp.nomeArquivo} · {imp.linhasProcessadas} linhas · meses: {imp.meses?.join(", ")}</span>
+                  <span style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                    <button className="btn btn-ghost" style={{ fontSize: 11, padding: "3px 8px" }}
+                      disabled={excluindoImportacao === imp.id} onClick={() => removerRegistro(imp.id)}
+                      title="Só tira da lista — não apaga nenhum dado">
+                      Remover da lista
+                    </button>
+                    <button className="btn btn-danger" style={{ fontSize: 11, padding: "3px 8px" }}
+                      disabled={excluindoImportacao === imp.id} onClick={() => excluirDados(imp)}
+                      title="Apaga os dados dessa importação de verdade">
+                      {excluindoImportacao === imp.id ? "Excluindo..." : "Excluir dados"}
+                    </button>
+                  </span>
                 </div>
               ))}
             </div>

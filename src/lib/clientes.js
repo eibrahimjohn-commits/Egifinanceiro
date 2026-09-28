@@ -379,3 +379,10 @@ export async function listarClientesDoGrupo(grupo) {
   const snap = await getDocs(query(clientesRef, where("grupo", "==", nome)));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
+
+// Status do cliente no grupo de novidades do WhatsApp: "nao" | "sim" | "saiu".
+export async function definirStatusGrupoWhatsapp(clienteIds, status) {
+  await Promise.all(clienteIds.map((id) =>
+    updateDoc(doc(db, "clientes", id), { grupoWhatsapp: status })
+  ));
+}

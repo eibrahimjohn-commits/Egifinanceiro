@@ -5,7 +5,7 @@ import {
 import { listarPedidos } from "../lib/pedidos";
 import {
   ESTADOS_BR, formatCurrency, formatDate,
-  OPCOES_PRAZO, idPrazoAtual, parseDescontoCampos, montarDescontoTexto,
+  OPCOES_PRAZO, idPrazoAtual, parseDescontoCampos, montarDescontoTexto, STATUS_GRUPO_WHATSAPP,
 } from "../lib/constants";
 import "./ClienteCadastroModal.css";
 
@@ -289,6 +289,14 @@ export default function ClienteCadastroModal({
                 <input className="input" value={editando.contato || ""}
                   onChange={(e) => setEditando({ ...editando, contato: e.target.value })} />
               </div>
+            </div>
+
+            <div className="field">
+              <label>Grupo de novidades no WhatsApp</label>
+              <select className="input" value={editando.grupoWhatsapp || "nao"}
+                onChange={(e) => setEditando({ ...editando, grupoWhatsapp: e.target.value })}>
+                {STATUS_GRUPO_WHATSAPP.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
             </div>
 
             <div className="field">

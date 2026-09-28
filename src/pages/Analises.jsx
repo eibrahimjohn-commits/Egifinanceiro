@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
 import { listarPedidos, importarHistoricoPedidos, marcarConferido } from "../lib/pedidos";
-import { listarClientes, registrarContatoInativo, marcarTelefoneIndisponivel, reativarTelefone, marcarTelefoneVerificado, desmarcarTelefoneVerificado } from "../lib/clientes";
+import { listarClientes, registrarContatoInativo, marcarTelefoneIndisponivel, reativarTelefone, marcarTelefoneVerificado, desmarcarTelefoneVerificado, definirStatusGrupoWhatsapp } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
-import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone, ehTelefoneFixo, linkLigar, herdarCondicoesDoGrupo } from "../lib/constants";
+import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone, ehTelefoneFixo, linkLigar, herdarCondicoesDoGrupo, STATUS_GRUPO_WHATSAPP, statusGrupoWhatsappDe } from "../lib/constants";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 
 const DIAS_INATIVO = 60;
@@ -108,6 +108,14 @@ export default function Analises({ onAbrirNoVales }) {
     setClientes((atual) => atual.map((c) => (ids.includes(c.id)
       ? { ...c, telefonesVerificados: (c.telefonesVerificados || []).filter((d) => d !== digitos) }
       : c)));
+  }
+
+  // Status no grupo de WhatsApp: grava em todos os cadastros do grupo de
+  // clientes e atualiza a tela na hora.
+  async function handleStatusGrupoWhatsapp(g, status) {
+    const ids = g.clientes.map((c) => c.id);
+    await definirStatusGrupoWhatsapp(ids, status);
+    setClientes((atual) => atual.map((c) => (ids.includes(c.id) ? { ...c, grupoWhatsapp: status } : c)));
   }
 
   async function handleArquivoHistorico(e) {
@@ -569,6 +577,15 @@ export default function Analises({ onAbrirNoVales }) {
                       Última compra: {formatDate(g.ultimaCompra)}
                       {g.mediaCompra > 0 && ` · Ticket médio ${formatCurrency(g.mediaCompra)}`}
                     </div>
+                    <label style={{ fontSize: 12, color: "var(--ink-soft)", display: "flex", alignItems: "center", gap: 6 }}
+                      onClick={(e) => e.stopPropagation()}>
+                      Grupo do WhatsApp:
+                      <select className="input" style={{ width: "auto", padding: "2px 6px", fontSize: 12 }}
+                        value={statusGrupoWhatsappDe(g.clientes)}
+                        onChange={(e) => handleStatusGrupoWhatsapp(g, e.target.value)}>
+                        {STATUS_GRUPO_WHATSAPP.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </label>
                     {telefones.length > 0 && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {telefones.map(({ numero, rotulo, foiAjustado }) => {
@@ -585,7 +602,7 @@ export default function Analises({ onAbrirNoVales }) {
                                   Ligar
                                 </a>
                               ) : (
-                                <a href={linkWhatsAppInativo(numero, nomeGrupoOuCliente(g))} target="_blank" rel="noopener noreferrer"
+                                <a href={linkWhatsAppInativo(numero, nomeGrupoOuCliente(g), statusGrupoWhatsappDe(g.clientes) === "nao")} target="_blank" rel="noopener noreferrer"
                                   className="btn btn-secondary" style={{ fontSize: 12, padding: "4px 10px" }}
                                   onClick={(e) => e.stopPropagation()}>
                                   Mandar mensagem

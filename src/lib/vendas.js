@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import {
-  collection, doc, getDocsFromServer, query, where, writeBatch, addDoc, serverTimestamp,
+  collection, doc, getDocsFromServer, query, where, writeBatch, setDoc, deleteDoc, serverTimestamp,
 } from "firebase/firestore";
 import { dbVendas } from "./firebaseVendas";
 import { dbPortal } from "./firebasePortal";
@@ -190,15 +190,36 @@ async function gravarEmLotesParalelo(itens, referencia, montarId, aoProgredir) {
   }));
 }
 
+// Mesma ideia, mas apagando: usado tanto pra excluir os dados de uma
+// importação quanto, dentro de recalcularResumosDoMes, pra limpar resumo que
+// ficou "órfão" (cuja última linha de origem foi apagada).
+async function excluirEmLotes(refs) {
+  const TAMANHO_LOTE = 450;
+  const lotes = [];
+  for (let i = 0; i < refs.length; i += TAMANHO_LOTE) lotes.push(refs.slice(i, i + TAMANHO_LOTE));
+  await Promise.all(lotes.map(async (pedaco) => {
+    const batch = writeBatch(db);
+    pedaco.forEach((ref) => batch.delete(ref));
+    await batch.commit();
+  }));
+}
+
 export async function importarPlanilhaVendas(linhas, nomeArquivo, aoProgredir) {
   const catalogo = await buscarCatalogoPortal();
 
+  // ID gerado ANTES de gravar (doc() sem argumento cria a referência sem
+  // escrever nada ainda) — assim toda linha já nasce marcada com o ID da
+  // importação que a gerou, e "excluir os dados dessa importação" consegue
+  // achar exatamente essas linhas depois, sem mexer nas de outro arquivo
+  // que porventura cubra o mesmo mês.
+  const importacaoId = doc(importacoesRef).id;
   const comEnriquecimento = linhas.map((l, i) => {
     const doCatalogo = buscarNoCatalogo(catalogo, l.codigoProduto, l.produto);
     return {
       ...l,
       categoria: doCatalogo?.categoria || "",
       subcategoria: doCatalogo?.subcategoria || "",
+      importacaoId,
       _indice: i, // usado só pra montar um ID de documento único, não é gravado como veio
     };
   });
@@ -213,7 +234,7 @@ export async function importarPlanilhaVendas(linhas, nomeArquivo, aoProgredir) {
   // Meses diferentes não dependem um do outro — recalcula todos em paralelo.
   await Promise.all(meses.map((mes) => recalcularResumosDoMes(mes)));
 
-  await addDoc(importacoesRef, {
+  await setDoc(doc(importacoesRef, importacaoId), {
     nomeArquivo,
     linhasProcessadas: linhas.length,
     meses,
@@ -221,7 +242,7 @@ export async function importarPlanilhaVendas(linhas, nomeArquivo, aoProgredir) {
   });
 
   const faturamentoTotal = linhas.reduce((s, l) => s + l.valorTotal, 0);
-  return { linhasProcessadas: linhas.length, meses, faturamentoTotal };
+  return { linhasProcessadas: linhas.length, meses, faturamentoTotal, importacaoId };
 }
 
 // Relê só as linhas DAQUELE mês (algumas dezenas de milhares no pior caso,
@@ -265,12 +286,37 @@ async function recalcularResumosDoMes(mes) {
     cliente: c.cliente, mes: c.mes, faturamento: c.faturamento, pedidos: c.pedidosSet.size,
   }));
 
+  const idDia = (d) => d.data;
+  const idProduto = (p) => `${p.codigoProduto || slug(p.produto)}_${mes}`;
+  const idCliente = (c) => `${slug(c.cliente)}_${mes}`;
+  const idsNovos = {
+    dia: new Set(diasArr.map(idDia)),
+    produto: new Set(produtosArr.map(idProduto)),
+    cliente: new Set(clientesArr.map(idCliente)),
+  };
+
+  // Apaga resumo que ficou órfão — cuja ÚLTIMA linha de origem foi apagada
+  // (por excluir uma importação, por exemplo). Sem isso, recalcular só
+  // SOBRESCREVE quem ainda tem linha; quem deixou de ter continuaria
+  // mostrando o valor antigo pra sempre, porque nunca seria tocado de novo.
+  const [diaAtual, produtoAtual, clienteAtual] = await Promise.all([
+    getDocsFromServer(query(resumoDiarioRef, where("mes", "==", mes))),
+    getDocsFromServer(query(resumoProdutoMesRef, where("mes", "==", mes))),
+    getDocsFromServer(query(resumoClienteMesRef, where("mes", "==", mes))),
+  ]);
+  const orfaos = [
+    ...diaAtual.docs.filter((d) => !idsNovos.dia.has(d.id)),
+    ...produtoAtual.docs.filter((d) => !idsNovos.produto.has(d.id)),
+    ...clienteAtual.docs.filter((d) => !idsNovos.cliente.has(d.id)),
+  ];
+  if (orfaos.length) await excluirEmLotes(orfaos.map((d) => d.ref));
+
   // Os 3 resumos são independentes entre si — grava os 3 ao mesmo tempo em
   // vez de um depois do outro.
   await Promise.all([
-    gravarEmLotesParalelo(diasArr, resumoDiarioRef, (d) => d.data),
-    gravarEmLotesParalelo(produtosArr, resumoProdutoMesRef, (p) => `${p.codigoProduto || slug(p.produto)}_${mes}`),
-    gravarEmLotesParalelo(clientesArr, resumoClienteMesRef, (c) => `${slug(c.cliente)}_${mes}`),
+    gravarEmLotesParalelo(diasArr, resumoDiarioRef, idDia),
+    gravarEmLotesParalelo(produtosArr, resumoProdutoMesRef, idProduto),
+    gravarEmLotesParalelo(clientesArr, resumoClienteMesRef, idCliente),
   ]);
 }
 
@@ -279,6 +325,41 @@ export async function listarImportacoes() {
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     .sort((a, b) => (b.meses?.[0] || "").localeCompare(a.meses?.[0] || ""));
+}
+
+// Tira só o registro da lista de importações — não mexe em nenhuma linha
+// nem resumo. Serve pra limpar um registro duplicado/antigo quando os dados
+// em si já estão corretos (ex: a mesma planilha foi importada duas vezes
+// antes de existir a trava por nome — o dinheiro nunca dobrou, porque cada
+// linha tem ID determinístico por pedido, mas o registro ficava duplicado
+// na lista).
+export async function removerRegistroImportacao(id) {
+  await deleteDoc(doc(importacoesRef, id));
+}
+
+// Apaga de fato os dados de uma importação: as linhas de venda dela, os
+// resumos recalculados sem elas, e o registro da importação.
+// - Importação feita DEPOIS dessa marcação existir: acha certinho só as
+//   linhas dela (importacaoId), sem afetar outro arquivo que cubra o mesmo
+//   mês.
+// - Importação mais antiga (linhas sem essa marca): não tem como saber quais
+//   linhas são especificamente dela, só o(s) mês(es) que ela cobre — nesse
+//   caso apaga o mês inteiro. O chamador decide se quer isso (ver aviso que
+//   a tela mostra antes de confirmar).
+export async function excluirDadosImportacao(importacao) {
+  const porMarca = await getDocsFromServer(query(linhasRef, where("importacaoId", "==", importacao.id)));
+  let refs = porMarca.docs.map((d) => d.ref);
+  const legado = refs.length === 0 && importacao.linhasProcessadas > 0;
+  if (legado) {
+    const porMes = await Promise.all((importacao.meses || []).map((mes) =>
+      getDocsFromServer(query(linhasRef, where("mes", "==", mes)))
+    ));
+    refs = porMes.flatMap((snap) => snap.docs.map((d) => d.ref));
+  }
+  await excluirEmLotes(refs);
+  await Promise.all((importacao.meses || []).map((mes) => recalcularResumosDoMes(mes)));
+  await deleteDoc(doc(importacoesRef, importacao.id));
+  return { legado, linhasApagadas: refs.length };
 }
 
 // --- Leitura pros dashboards — sempre nos resumos prontos, nunca no bruto ---
@@ -319,6 +400,31 @@ export async function listarResumoProdutos(mesInicio, mesFim) {
 
 // Quantos meses o período selecionado abrange (denominador de contexto: "8
 // de 12 meses vendeu" é mais claro que só "8 meses").
+// Define categoria/subcategoria manualmente num produto, no período em tela
+// — sobrescreve o que já estiver lá, inclusive um cruzamento automático
+// errado. Fica gravado: como toda correção automática (importação e
+// gravarCategoriasNosResumos) só toca em quem está com o campo vazio, essa
+// escolha manual nunca é substituída depois.
+export async function definirCategoriaProduto(produto, mesInicio, mesFim, categoria, subcategoria) {
+  const filtroProduto = produto.codigoProduto
+    ? where("codigoProduto", "==", produto.codigoProduto)
+    : where("produto", "==", produto.produto);
+  const snap = await getDocsFromServer(query(
+    resumoProdutoMesRef, where("mes", ">=", mesInicio), where("mes", "<=", mesFim), filtroProduto
+  ));
+  if (snap.empty) return 0;
+  const TAMANHO_LOTE = 450;
+  const docs = snap.docs;
+  const lotes = [];
+  for (let i = 0; i < docs.length; i += TAMANHO_LOTE) lotes.push(docs.slice(i, i + TAMANHO_LOTE));
+  await Promise.all(lotes.map(async (pedaco) => {
+    const batch = writeBatch(db);
+    pedaco.forEach((d) => batch.update(d.ref, { categoria, subcategoria }));
+    await batch.commit();
+  }));
+  return docs.length;
+}
+
 export function contarMesesPeriodo(mesInicio, mesFim) {
   const [aIni, mIni] = mesInicio.split("-").map(Number);
   const [aFim, mFim] = mesFim.split("-").map(Number);

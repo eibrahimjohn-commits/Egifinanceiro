@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarResumoProdutos, listarImportacoes, buscarDetalheProduto, enriquecerCategorias, gravarCategoriasNosResumos, contarMesesPeriodo } from "../lib/vendas";
+import { listarResumoProdutos, listarImportacoes, buscarDetalheProduto, enriquecerCategorias, gravarCategoriasNosResumos, contarMesesPeriodo, definirCategoriaProduto } from "../lib/vendas";
 import { formatCurrency, NOMES_MES } from "../lib/constants";
 import SeletorPeriodo from "../components/SeletorPeriodo";
 import {
@@ -43,6 +43,41 @@ export default function Produtos() {
   const [subcategoriaFiltro, setSubcategoriaFiltro] = useState("");
   const [classesFiltro, setClassesFiltro] = useState(new Set()); // A / B / C
   const [limite, setLimite] = useState(100);
+  const [semCategoriaFiltro, setSemCategoriaFiltro] = useState(false);
+
+  // --- Edição manual de categoria, direto no card ------------------------
+  const [editandoCategoria, setEditandoCategoria] = useState(null); // chave do produto
+  const [categoriaEdit, setCategoriaEdit] = useState("");
+  const [subcategoriaEdit, setSubcategoriaEdit] = useState("");
+  const [salvandoCategoria, setSalvandoCategoria] = useState(false);
+
+  function abrirEdicaoCategoria(p) {
+    setEditandoCategoria(p.codigoProduto || p.produto);
+    setCategoriaEdit(p.categoria || "");
+    setSubcategoriaEdit(p.subcategoria || "");
+  }
+
+  async function salvarCategoriaManual(p) {
+    setSalvandoCategoria(true);
+    try {
+      const categoria = categoriaEdit.trim();
+      const subcategoria = subcategoriaEdit.trim();
+      await definirCategoriaProduto(p, mesInicio, mesFim, categoria, subcategoria);
+      const chaveP = p.codigoProduto || p.produto;
+      setProdutos((atual) => {
+        const novo = atual.map((x) => ((x.codigoProduto || x.produto) === chaveP ? { ...x, categoria, subcategoria } : x));
+        // mantém o cache desse período em dia, senão a próxima abertura
+        // mostraria a categoria antiga de novo até um novo cruzamento
+        salvarGraficoSalvo(chaveProdutos(mesInicio, mesFim), { tipo: "produtos", mesInicio, mesFim, produtos: novo });
+        return novo;
+      });
+      setEditandoCategoria(null);
+    } catch (e) {
+      console.warn("Não consegui salvar a categoria manual agora.", e);
+    } finally {
+      setSalvandoCategoria(false);
+    }
+  }
   function alternarClasse(c) {
     setClassesFiltro((atual) => {
       const novo = new Set(atual);
@@ -195,6 +230,7 @@ export default function Produtos() {
     if (categoriaFiltro && p.categoria !== categoriaFiltro) return false;
     if (subcategoriaFiltro && p.subcategoria !== subcategoriaFiltro) return false;
     if (classesFiltro.size && !classesFiltro.has(p.classe)) return false;
+    if (semCategoriaFiltro && p.categoria) return false;
     if (busca && !`${p.produto} ${p.codigoProduto}`.toLowerCase().includes(busca.toLowerCase())) return false;
     return true;
   });
@@ -419,9 +455,14 @@ export default function Produtos() {
                   {classesFiltro.has(c) ? "✓ " : ""}{c} ({contagemClasse[c]})
                 </button>
               ))}
-              {(classesFiltro.size > 0 || categoriaFiltro || subcategoriaFiltro) && (
+              <button type="button" className={"badge filtro-chip" + (semCategoriaFiltro ? " filtro-ativo" : "")}
+                style={{ background: "var(--ink-soft)", color: "white" }}
+                onClick={() => { setSemCategoriaFiltro((v) => !v); setLimite(100); }}>
+                {semCategoriaFiltro ? "✓ " : ""}Sem categoria ({produtos.filter((p) => !p.categoria).length})
+              </button>
+              {(classesFiltro.size > 0 || categoriaFiltro || subcategoriaFiltro || semCategoriaFiltro) && (
                 <button type="button" className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 8px" }}
-                  onClick={() => { setClassesFiltro(new Set()); setCategoriaFiltro(""); setSubcategoriaFiltro(""); setLimite(100); }}>
+                  onClick={() => { setClassesFiltro(new Set()); setCategoriaFiltro(""); setSubcategoriaFiltro(""); setSemCategoriaFiltro(false); setLimite(100); }}>
                   Limpar filtros
                 </button>
               )}
@@ -437,9 +478,32 @@ export default function Produtos() {
                     <strong style={{ fontSize: 13 }}>{i + 1}. {p.produto || "(sem nome)"}</strong>
                     <span className="badge" style={{ background: CORES_CLASSE[p.classe], color: "white", flexShrink: 0 }}>{p.classe}</span>
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>
-                    {p.codigoProduto} {p.categoria && `· ${p.categoria}`}{p.subcategoria && ` / ${p.subcategoria}`}
-                  </div>
+                  {editandoCategoria === (p.codigoProduto || p.produto) ? (
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+                      <input className="input" style={{ flex: "1 1 100px", padding: "3px 6px", fontSize: 12 }}
+                        list="lista-categorias-produtos" placeholder="Categoria" value={categoriaEdit}
+                        onChange={(e) => setCategoriaEdit(e.target.value)} autoFocus />
+                      <input className="input" style={{ flex: "1 1 100px", padding: "3px 6px", fontSize: 12 }}
+                        list="lista-subcategorias-produtos" placeholder="Subcategoria" value={subcategoriaEdit}
+                        onChange={(e) => setSubcategoriaEdit(e.target.value)} />
+                      <button type="button" className="btn btn-primary" style={{ padding: "3px 8px", fontSize: 12 }}
+                        disabled={salvandoCategoria} onClick={() => salvarCategoriaManual(p)}>
+                        {salvandoCategoria ? "..." : "✓"}
+                      </button>
+                      <button type="button" className="btn btn-ghost" style={{ padding: "3px 8px", fontSize: 12 }}
+                        onClick={() => setEditandoCategoria(null)}>✕</button>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: "var(--ink-soft)", display: "flex", alignItems: "center", gap: 6 }}>
+                      <span>
+                        {p.codigoProduto} {p.categoria ? `· ${p.categoria}` : <em>sem categoria</em>}{p.subcategoria && ` / ${p.subcategoria}`}
+                      </span>
+                      <button type="button" className="btn btn-ghost" style={{ padding: "0 4px", fontSize: 11, flexShrink: 0 }}
+                        title="Alterar categoria" onClick={(e) => { e.stopPropagation(); abrirEdicaoCategoria(p); }}>
+                        ✎
+                      </button>
+                    </div>
+                  )}
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
                     <span>{p.qtd} un.</span>
                     <strong>{formatCurrency(p.faturamento)}</strong>
@@ -454,6 +518,12 @@ export default function Produtos() {
                 </div>
               ))}
             </div>
+            <datalist id="lista-categorias-produtos">
+              {categorias.map((c) => <option key={c} value={c} />)}
+            </datalist>
+            <datalist id="lista-subcategorias-produtos">
+              {subcategorias.map((c) => <option key={c} value={c} />)}
+            </datalist>
             {listaFiltrada.length > limite && (
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
                 <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>
