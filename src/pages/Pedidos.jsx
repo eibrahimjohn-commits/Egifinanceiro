@@ -485,7 +485,12 @@ export default function Pedidos() {
 
             {aviso.chequesACair.length > 0 && (
               <div style={{ marginBottom: 14 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>Cheque(s) a cair:</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                  <span style={{ fontWeight: 700, fontSize: 14 }}>Cheques a compensar:</span>
+                  <strong style={{ fontSize: 15 }}>
+                    {formatCurrency(aviso.chequesACair.reduce((s, c) => s + Number(c.valor || 0), 0))}
+                  </strong>
+                </div>
                 {aviso.chequesACair.map((c, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "4px 0" }}>
                     <span>N°{c.numero} — {formatDate(c.data)}</span>

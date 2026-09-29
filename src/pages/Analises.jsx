@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
 import { listarPedidos, importarHistoricoPedidos, marcarConferido } from "../lib/pedidos";
+import { listarChequesDevolvidos } from "../lib/chequesDevolvidos";
 import { listarClientes, registrarContatoInativo, marcarTelefoneIndisponivel, reativarTelefone, marcarTelefoneVerificado, desmarcarTelefoneVerificado, definirStatusGrupoWhatsapp } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
-import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone, ehTelefoneFixo, linkLigar, herdarCondicoesDoGrupo, STATUS_GRUPO_WHATSAPP, statusGrupoWhatsappDe } from "../lib/constants";
+import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone, ehTelefoneFixo, linkLigar, herdarCondicoesDoGrupo, STATUS_GRUPO_WHATSAPP, statusGrupoWhatsappDe, valorDevidoDoPedido } from "../lib/constants";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 
 const DIAS_INATIVO = 60;
@@ -12,6 +13,9 @@ const DIAS_COOLDOWN_CONTATO = 14;
 export default function Analises({ onAbrirNoVales }) {
   const [pedidos, setPedidos] = useState([]);
   const [clientes, setClientes] = useState([]);
+  const [chequesDevolvidosRanking, setChequesDevolvidosRanking] = useState([]);
+  const [limiteRanking, setLimiteRanking] = useState(100);
+  const [pesosRanking, setPesosRanking] = useState({ capitalSocial: 25, ticketMedio: 25, frequencia: 25, chequesDevolvidos: 25 });
   const [carregando, setCarregando] = useState(true);
   const [modalAberto, setModalAberto] = useState(null); // { clientes, grupoNome }
   const [ordenacaoInativos, setOrdenacaoInativos] = useState("nome_asc");
@@ -44,9 +48,10 @@ export default function Analises({ onAbrirNoVales }) {
 
   async function carregarTudo({ silencioso = false } = {}) {
     if (!silencioso) setCarregando(true);
-    const [p, c] = await Promise.all([listarPedidos(), listarClientes()]);
+    const [p, c, ch] = await Promise.all([listarPedidos(), listarClientes(), listarChequesDevolvidos()]);
     setPedidos(p);
     setClientes(c);
+    setChequesDevolvidosRanking(ch);
     setCarregando(false);
   }
 
@@ -225,6 +230,70 @@ export default function Analises({ onAbrirNoVales }) {
     g.clientes.push(c);
     if (!g.representante && c.representante) g.representante = c.representante;
   });
+
+  // --- Ranking de Clientes/Grupo ------------------------------------------
+  // Percentil (0-100) da posição de "valor" dentro de "valores" — empate usa
+  // a média das posições empatadas. Base padrão de comparação de indicador
+  // de escalas bem diferentes entre si (capital social em milhões, ticket
+  // médio em centenas, frequência em unidades).
+  function percentilDe(valor, valoresOrdenados) {
+    const n = valoresOrdenados.length;
+    if (n <= 1) return 100;
+    let menores = 0;
+    let iguais = 0;
+    valoresOrdenados.forEach((v) => { if (v < valor) menores++; else if (v === valor) iguais++; });
+    return ((menores + (iguais - 1) / 2) / (n - 1)) * 100;
+  }
+
+  const PENALIDADE_POR_CHEQUE_DEVOLVIDO = 25; // cada cheque devolvido tira 25 pontos (0 a 100)
+
+  const chequesDevPorCliente = new Map();
+  chequesDevolvidosRanking.forEach((ch) => {
+    if (!ch.clienteId) return;
+    chequesDevPorCliente.set(ch.clienteId, (chequesDevPorCliente.get(ch.clienteId) || 0) + 1);
+  });
+
+  // Só entra no ranking quem já comprou alguma vez — ticket médio e
+  // frequência não fazem sentido pra quem nunca teve pedido.
+  const baseRanking = Array.from(gruposTodos.values())
+    .map((g) => {
+      const idsDoGrupo = new Set(g.clientes.map((c) => c.id));
+      const pedidosDoGrupo = pedidos.filter((p) => idsDoGrupo.has(p.clienteId));
+      const qtdPedidos = pedidosDoGrupo.length;
+      const faturamentoTotal = pedidosDoGrupo.reduce((s, p) => s + valorDevidoDoPedido(p), 0);
+      const capitaisSociais = g.clientes.map((c) => c.infoExtra?.capitalSocial).filter((v) => v != null);
+      const qtdChequesDevolvidos = g.clientes.reduce((s, c) => s + (chequesDevPorCliente.get(c.id) || 0), 0);
+      return {
+        ...g,
+        qtdPedidos,
+        ticketMedio: qtdPedidos ? faturamentoTotal / qtdPedidos : 0,
+        capitalSocial: capitaisSociais.length ? capitaisSociais.reduce((s, v) => s + v, 0) : null,
+        qtdChequesDevolvidos,
+      };
+    })
+    .filter((g) => g.qtdPedidos > 0);
+
+  const valoresCapitalSocial = baseRanking.map((g) => g.capitalSocial).filter((v) => v != null).sort((a, b) => a - b);
+  const valoresTicketMedio = baseRanking.map((g) => g.ticketMedio).sort((a, b) => a - b);
+  const valoresFrequencia = baseRanking.map((g) => g.qtdPedidos).sort((a, b) => a - b);
+
+  const rankingClientes = baseRanking
+    .map((g) => {
+      // Sem capital social cadastrado: nota neutra (50), pra não punir quem
+      // simplesmente ainda não teve o CNPJ consultado.
+      const notaCapitalSocial = g.capitalSocial != null ? percentilDe(g.capitalSocial, valoresCapitalSocial) : 50;
+      const notaTicketMedio = percentilDe(g.ticketMedio, valoresTicketMedio);
+      const notaFrequencia = percentilDe(g.qtdPedidos, valoresFrequencia);
+      const notaChequesDevolvidos = Math.max(0, 100 - g.qtdChequesDevolvidos * PENALIDADE_POR_CHEQUE_DEVOLVIDO);
+      const pesos = pesosRanking;
+      const somaPesos = pesos.capitalSocial + pesos.ticketMedio + pesos.frequencia + pesos.chequesDevolvidos;
+      const score = somaPesos > 0
+        ? (notaCapitalSocial * pesos.capitalSocial + notaTicketMedio * pesos.ticketMedio
+          + notaFrequencia * pesos.frequencia + notaChequesDevolvidos * pesos.chequesDevolvidos) / somaPesos
+        : 0;
+      return { ...g, notaCapitalSocial, notaTicketMedio, notaFrequencia, notaChequesDevolvidos, score };
+    })
+    .sort((a, b) => b.score - a.score);
 
   const gruposInativos = Array.from(gruposTodos.values())
     .map((g) => {
@@ -494,6 +563,7 @@ export default function Analises({ onAbrirNoVales }) {
           <option value="inativos">😴 Clientes inativos ({gruposInativosOrdenados.length})</option>
           <option value="semContato">📵 Clientes sem contato ativo ({gruposSemContato.length})</option>
           <option value="mapaCalor">🗺️ Mapa de calor — cidade/estado</option>
+          <option value="ranking">🏆 Ranking de Clientes/Grupo ({rankingClientes.length})</option>
         </select>
       </div>
 
@@ -738,6 +808,69 @@ export default function Analises({ onAbrirNoVales }) {
               ))
             )}
           </div>
+        </div>
+        )}
+
+        {analiseAtiva === "ranking" && (
+        <div className="card" id="secao-ranking">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <h2 className="card-title" style={{ marginBottom: 0 }}>Ranking de Clientes/Grupo ({rankingClientes.length})</h2>
+          </div>
+          <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 14 }}>
+            Cada indicador vira uma nota de 0 a 100 (posição relativa entre os clientes, exceto cheques
+            devolvidos, que começa em 100 e perde {PENALIDADE_POR_CHEQUE_DEVOLVIDO} pontos por cheque). O placar final é a
+            média dessas notas, pesada como você ajustar abaixo. Sem capital social cadastrado conta nota
+            neutra (50) — não penaliza quem ainda não teve o CNPJ consultado. Só entra quem já comprou
+            alguma vez.
+          </p>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16, background: "var(--bg)", borderRadius: 10, padding: 12 }}>
+            {[
+              { chave: "capitalSocial", label: "Capital social" },
+              { chave: "ticketMedio", label: "Ticket médio" },
+              { chave: "frequencia", label: "Frequência" },
+              { chave: "chequesDevolvidos", label: "Cheques devolvidos" },
+            ].map((item) => (
+              <label key={item.chave} style={{ fontSize: 12, color: "var(--ink-soft)", display: "flex", flexDirection: "column", gap: 4 }}>
+                {item.label} (peso {pesosRanking[item.chave]})
+                <input type="range" min={0} max={100} value={pesosRanking[item.chave]}
+                  onChange={(e) => setPesosRanking((p) => ({ ...p, [item.chave]: Number(e.target.value) }))}
+                  style={{ width: 140 }} />
+              </label>
+            ))}
+          </div>
+          <div className="analises-lista">
+            {rankingClientes.length === 0 ? (
+              <div className="empty-state" style={{ padding: 12 }}>Nenhum cliente com pedido lançado ainda.</div>
+            ) : (
+              rankingClientes.slice(0, limiteRanking).map((g, i) => (
+                <div key={g.chave} className="list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, cursor: "pointer" }}
+                  onClick={() => setModalAberto({ clientes: g.clientes, grupoNome: g.nomeGrupo || undefined })}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                    <span><strong>#{i + 1} · {nomeGrupoOuCliente(g)}</strong></span>
+                    <span className="badge badge-pago">{g.score.toFixed(0)} pts</span>
+                  </div>
+                  {g.representante && <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Rep: {g.representante}</div>}
+                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "var(--ink-soft)" }}>
+                    <span>💰 {g.capitalSocial != null ? formatCurrency(g.capitalSocial) : "sem dado"} (nota {g.notaCapitalSocial.toFixed(0)})</span>
+                    <span>🎯 Ticket médio {formatCurrency(g.ticketMedio)} (nota {g.notaTicketMedio.toFixed(0)})</span>
+                    <span>🔁 {g.qtdPedidos} pedido(s) (nota {g.notaFrequencia.toFixed(0)})</span>
+                    <span style={g.qtdChequesDevolvidos > 0 ? { color: "var(--red)" } : undefined}>
+                      🚫 {g.qtdChequesDevolvidos} cheque(s) devolvido(s) (nota {g.notaChequesDevolvidos.toFixed(0)})
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          {rankingClientes.length > limiteRanking && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+              <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>Mostrando {limiteRanking} de {rankingClientes.length}.</span>
+              <button type="button" className="btn btn-secondary" style={{ fontSize: 12, padding: "6px 12px" }}
+                onClick={() => setLimiteRanking((l) => l + 100)}>
+                Carregar mais 100
+              </button>
+            </div>
+          )}
         </div>
         )}
       </div>

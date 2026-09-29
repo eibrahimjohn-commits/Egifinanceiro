@@ -81,11 +81,18 @@ export async function buscarPendenciasCliente({ clienteId, grupo }) {
     .filter((v) => v.saldo > 0.01);
 
   const hoje = todayISO();
-  const chequesACair = doCliente.flatMap((p) =>
-    (p.formasPagamento || [])
-      .filter((f) => f.tipo === "cheque")
-      .flatMap((f) => (f.parcelas || []).filter((parc) => parc.data >= hoje).map((parc) => ({ ...parc, pedidoData: p.data })))
-  );
+  // Cheque pode ter sido declarado na hora da venda (formasPagamento) OU
+  // registrado depois, pela tela de Vales (pagamentos — campo separado,
+  // usado pelo fluxo de "Registrar pagamento" com folhas editáveis). Os dois
+  // contam: os dois são dinheiro do cliente ainda a compensar.
+  const parcelasDeChequeDoPedido = (p) => [
+    ...(p.formasPagamento || []).filter((f) => f.tipo === "cheque").flatMap((f) => f.parcelas || []),
+    ...(p.pagamentos || []).filter((pg) => pg.formaPagamento === "cheque").flatMap((pg) => pg.parcelas || []),
+  ];
+  const chequesACair = doCliente
+    .flatMap((p) => parcelasDeChequeDoPedido(p).map((parc) => ({ ...parc, pedidoData: p.data })))
+    .filter((parc) => parc.data >= hoje)
+    .sort((a, b) => a.data.localeCompare(b.data)); // mais próximo de vencer primeiro
 
   const mediaCompra = todosDoCliente.length > 0
     ? todosDoCliente.reduce((s, p) => s + valorDevidoDoPedido(p), 0) / todosDoCliente.length
