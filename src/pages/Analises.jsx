@@ -295,6 +295,16 @@ export default function Analises({ onAbrirNoVales }) {
     })
     .sort((a, b) => b.score - a.score);
 
+  // Busca rápida da nota por grupo, pra mostrar ao lado do nome em qualquer
+  // lista desta tela (mesma chave usada em gruposTodos em toda a página).
+  const notaPorChave = new Map(rankingClientes.map((g) => [g.chave, g.score]));
+  function BadgeNota({ chave }) {
+    const nota = notaPorChave.get(chave);
+    if (nota == null) return null;
+    const cor = nota >= 70 ? "badge-pago" : nota >= 40 ? "badge-aberto" : "badge-atraso";
+    return <span className={"badge " + cor} title="Nota no Ranking de Clientes/Grupo">⭐ {nota.toFixed(0)}</span>;
+  }
+
   const gruposInativos = Array.from(gruposTodos.values())
     .map((g) => {
       const ultimaCompra = g.clientes.reduce((max, c) => {
@@ -634,11 +644,14 @@ export default function Analises({ onAbrirNoVales }) {
                   <div key={g.chave} className="list-item"
                     onDoubleClick={() => (multiplos ? toggleExpandidoInativo(g.chave) : abrirCliente(g.clientes[0]))}
                     style={{ flexDirection: "column", alignItems: "stretch", gap: 6, cursor: "default" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                       <strong>{nomeGrupoOuCliente(g)}</strong>
-                      {multiplos && (
-                        <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{g.clientes.length} CNPJs</span>
-                      )}
+                      <span style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                        {multiplos && (
+                          <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{g.clientes.length} CNPJs</span>
+                        )}
+                        <BadgeNota chave={g.chave} />
+                      </span>
                     </div>
                     {g.representante && (
                       <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Rep: {g.representante}</div>
@@ -778,9 +791,12 @@ export default function Analises({ onAbrirNoVales }) {
             ) : (
               gruposSemContato.map((g) => (
                 <div key={g.chave} className="list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, cursor: "default" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                     <strong>{nomeGrupoOuCliente(g)}</strong>
-                    {g.clientes.length > 1 && <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{g.clientes.length} CNPJs</span>}
+                    <span style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                      {g.clientes.length > 1 && <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{g.clientes.length} CNPJs</span>}
+                      <BadgeNota chave={g.chave} />
+                    </span>
                   </div>
                   {g.representante && <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Rep: {g.representante}</div>}
                   <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>

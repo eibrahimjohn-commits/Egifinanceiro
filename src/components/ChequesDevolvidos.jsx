@@ -258,6 +258,7 @@ export function DetalheChequeDevolvido({ cheque, onAtualizado, mostrarToast }) {
   const [formaBaixa, setFormaBaixa] = useState("pix_ted");
   const [contaBaixa, setContaBaixa] = useState("");
   const [contaBaixaId, setContaBaixaId] = useState("");
+  const [descricaoBaixa, setDescricaoBaixa] = useState("");
   const [salvando, setSalvando] = useState(false);
 
   const saldo = cheque.valorCheque - (cheque.valorPago || 0);
@@ -265,11 +266,13 @@ export function DetalheChequeDevolvido({ cheque, onAtualizado, mostrarToast }) {
 
   async function confirmar() {
     if (!valorBaixa || Number(valorBaixa) <= 0) { mostrarToast("Informe um valor válido"); return; }
+    if (formaBaixa === "conta_terceiros" && !descricaoBaixa.trim()) { mostrarToast("Informe de quem é a conta"); return; }
     setSalvando(true);
     try {
       await registrarPagamentoChequeDevolvido(cheque.id, cheque, {
         valor: Number(valorBaixa), data: dataBaixa, formaPagamento: formaBaixa,
         conta: contaBaixa ? `${contaBaixa}${contaBaixaId ? " - " + contaBaixaId : ""}` : "",
+        ...(formaBaixa === "conta_terceiros" ? { descricao: descricaoBaixa.trim() } : {}),
       });
       mostrarToast("Pagamento registrado!");
       setAbrindoBaixa(false);
@@ -325,6 +328,13 @@ export function DetalheChequeDevolvido({ cheque, onAtualizado, mostrarToast }) {
             </div>
             {FORMAS_COM_CONTA.includes(formaBaixa) && (
               <CampoConta conta={contaBaixa} setConta={setContaBaixa} identificacao={contaBaixaId} setIdentificacao={setContaBaixaId} />
+            )}
+            {formaBaixa === "conta_terceiros" && (
+              <div className="field">
+                <label>De quem é a conta</label>
+                <input className="input" value={descricaoBaixa} onChange={(e) => setDescricaoBaixa(e.target.value)}
+                  placeholder="Ex: conta do irmão do cliente, João Silva" />
+              </div>
             )}
             <div style={{ display: "flex", gap: 8 }}>
               <button className="btn btn-primary" onClick={confirmar} disabled={salvando}>

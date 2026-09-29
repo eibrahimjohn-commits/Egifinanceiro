@@ -332,9 +332,24 @@ export default function Pedidos() {
   // sempre vale, "à vista" só se o prazo escolhido aqui for de até 7 dias.
   const descontoDoPedido = descontoAplicavelAoPedido(cliente.descontoPadrao, cliente.prazo);
   const valorEsperado = calcularValorDevido(valorTotalPedido, descontoDoPedido);
-  const valorAlocado = formas.reduce((s, f) => {
-    return s + (f.tipo === "cheque" ? Number(f.valorTotal) || 0 : Number(f.valor) || 0);
-  }, 0);
+
+  // Valor "de verdade" de uma forma de pagamento: se "preencher automático"
+  // está marcado, não é o que está guardado em f.valor (que fica desatualizado
+  // assim que qualquer forma anterior muda) — é sempre recalculado na hora:
+  // a primeira forma marcada vira o valor total do pedido (já com desconto);
+  // as próximas viram o que sobrou depois das formas de cima. Cheque não
+  // participa desse mecanismo (tem campo de valor próprio).
+  function valorEfetivoForma(i) {
+    const f = formas[i];
+    if (f.tipo === "cheque") return Number(f.valorTotal) || 0;
+    if (!f.autoPreencher) return Number(f.valor) || 0;
+    if (i === 0) return Math.max(0, valorEsperado);
+    let somaAnteriores = 0;
+    for (let j = 0; j < i; j++) somaAnteriores += valorEfetivoForma(j);
+    return Math.max(0, valorEsperado - somaAnteriores);
+  }
+
+  const valorAlocado = formas.reduce((s, _f, i) => s + valorEfetivoForma(i), 0);
   const diferenca = valorEsperado - valorAlocado;
   const margemOk = Math.abs(diferenca) <= valorEsperado * 0.005;
 
@@ -383,19 +398,20 @@ export default function Pedidos() {
       );
 
       const formasPagamento = formas
-        .filter((f) => (f.tipo === "cheque" ? Number(f.valorTotal) > 0 : Number(f.valor) > 0))
-        .map((f) => {
+        .map((f, i) => ({ f, valorEfetivo: valorEfetivoForma(i) }))
+        .filter(({ valorEfetivo }) => valorEfetivo > 0)
+        .map(({ f, valorEfetivo }) => {
           if (f.tipo === "cheque") {
             const parcelas = parcelasDaForma(f);
             return {
               tipo: "cheque",
-              valor: Number(f.valorTotal),
+              valor: valorEfetivo,
               numFolhas: Number(f.numFolhas),
               prazoUltimoCheque: f.prazoUltimoCheque,
               parcelas,
             };
           }
-          return { tipo: f.tipo, valor: Number(f.valor), ...(f.tipo === "conta_terceiros" ? { descricao: f.descricao || "" } : {}) };
+          return { tipo: f.tipo, valor: valorEfetivo, ...(f.tipo === "conta_terceiros" ? { descricao: f.descricao || "" } : {}) };
         });
 
       // Reconciliação automática: se o alocado não bater com (valor - desconto),
@@ -730,8 +746,15 @@ export default function Pedidos() {
               {f.tipo !== "cheque" && (
                 <div className="field">
                   <label>Valor (R$)</label>
-                  <input className="input" type="number" step="0.01" min="0" value={f.valor}
+                  <input className="input" type="number" step="0.01" min="0"
+                    value={f.autoPreencher ? valorEfetivoForma(i).toFixed(2) : f.valor}
+                    readOnly={f.autoPreencher}
                     onChange={(e) => updateForma(i, "valor", e.target.value)} />
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-soft)", marginTop: 4, fontWeight: 400 }}>
+                    <input type="checkbox" checked={Boolean(f.autoPreencher)}
+                      onChange={(e) => updateForma(i, "autoPreencher", e.target.checked)} />
+                    {i === 0 ? "Valor total" : "Restante (total menos as formas de cima)"}
+                  </label>
                 </div>
               )}
               {formas.length > 1 && (

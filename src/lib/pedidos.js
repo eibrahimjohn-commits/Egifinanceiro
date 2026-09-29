@@ -89,7 +89,12 @@ export async function buscarPendenciasCliente({ clienteId, grupo }) {
     ...(p.formasPagamento || []).filter((f) => f.tipo === "cheque").flatMap((f) => f.parcelas || []),
     ...(p.pagamentos || []).filter((pg) => pg.formaPagamento === "cheque").flatMap((pg) => pg.parcelas || []),
   ];
-  const chequesACair = doCliente
+  // IMPORTANTE: usa todosDoCliente, não doCliente. Um pedido pago em cheque
+  // é arquivado (some do "Em aberto" e vai pra Recebidos) assim que o
+  // sistema considera o valor recebido — mas o cheque físico só compensa de
+  // verdade na data dele. "Pago" no sistema não é o mesmo que "já caiu no
+  // banco", então pedido arquivado continua entrando aqui até a data passar.
+  const chequesACair = todosDoCliente
     .flatMap((p) => parcelasDeChequeDoPedido(p).map((parc) => ({ ...parc, pedidoData: p.data })))
     .filter((parc) => parc.data >= hoje)
     .sort((a, b) => a.data.localeCompare(b.data)); // mais próximo de vencer primeiro
