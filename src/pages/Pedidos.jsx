@@ -31,6 +31,7 @@ const CLIENTE_VAZIO = {
   razaoSocial: "",
   cnpj: "",
   representante: "",
+  whatsapp: "",
   descontoPadrao: "",
   prazo: "",
   prazoModelo: "",
@@ -166,6 +167,7 @@ export default function Pedidos() {
       razaoSocial: c.razaoSocial || "",
       cnpj: c.cnpj || "",
       representante: c.representante || "",
+      whatsapp: c.whatsapp || "",
       descontoPadrao: c.descontoPadrao || "",
       prazo: c.prazo ?? "",
       prazoModelo: c.prazoModelo || "",
@@ -386,6 +388,7 @@ export default function Pedidos() {
           razaoSocial: cliente.razaoSocial,
           cnpj: cliente.cnpj,
           representante: cliente.representante,
+          whatsapp: cliente.whatsapp,
           descontoPadrao: cliente.descontoPadrao,
           prazo: cliente.prazo,
           prazoModelo: cliente.prazoModelo,
@@ -632,17 +635,23 @@ export default function Pedidos() {
         <div className="row">
           <div className="field">
             <label>Desconto</label>
-            <input className="input" type="number" step="0.01" min="0" value={descontoNumero}
-              onChange={(e) => atualizarDesconto(e.target.value, descontoCondicao)}
-              placeholder="Ex: 5" />
+            <div style={{ display: "flex", gap: 8 }}>
+              <input className="input" type="number" step="0.01" min="0" value={descontoNumero}
+                onChange={(e) => atualizarDesconto(e.target.value, descontoCondicao)}
+                placeholder="Ex: 5" style={{ flex: 1 }} />
+              <select className="input" value={descontoCondicao}
+                onChange={(e) => atualizarDesconto(descontoNumero, e.target.value)}
+                style={{ flex: 1 }}>
+                <option value="avista">À vista</option>
+                <option value="fixo">Fixo</option>
+              </select>
+            </div>
           </div>
           <div className="field">
-            <label>Condição</label>
-            <select className="input" value={descontoCondicao}
-              onChange={(e) => atualizarDesconto(descontoNumero, e.target.value)}>
-              <option value="avista">À vista</option>
-              <option value="fixo">Fixo</option>
-            </select>
+            <label>WhatsApp</label>
+            <input className="input" value={cliente.whatsapp}
+              onChange={(e) => atualizarCliente("whatsapp", e.target.value)}
+              placeholder="Ex: (11) 98765-4321" />
           </div>
         </div>
         {descontoNumero > 0 && (
@@ -750,11 +759,6 @@ export default function Pedidos() {
                     value={f.autoPreencher ? valorEfetivoForma(i).toFixed(2) : f.valor}
                     readOnly={f.autoPreencher}
                     onChange={(e) => updateForma(i, "valor", e.target.value)} />
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-soft)", marginTop: 4, fontWeight: 400 }}>
-                    <input type="checkbox" checked={Boolean(f.autoPreencher)}
-                      onChange={(e) => updateForma(i, "autoPreencher", e.target.checked)} />
-                    {i === 0 ? "Valor total" : "Restante (total menos as formas de cima)"}
-                  </label>
                 </div>
               )}
               {formas.length > 1 && (
@@ -762,6 +766,13 @@ export default function Pedidos() {
                   onClick={() => removeForma(i)}>✕</button>
               )}
             </div>
+            {f.tipo !== "cheque" && (
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-soft)", marginTop: 6, fontWeight: 400 }}>
+                <input type="checkbox" checked={Boolean(f.autoPreencher)}
+                  onChange={(e) => updateForma(i, "autoPreencher", e.target.checked)} />
+                {i === 0 ? "Valor total" : "Restante (total menos as formas de cima)"}
+              </label>
+            )}
 
             {f.tipo === "conta_terceiros" && (
               <div className="field">
