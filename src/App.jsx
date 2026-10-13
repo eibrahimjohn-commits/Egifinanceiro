@@ -10,14 +10,15 @@ import Prospeccao from "./pages/Prospeccao";
 import Historico from "./pages/Historico";
 import Vendas from "./pages/Vendas";
 import Produtos from "./pages/Produtos";
+import Financeiro from "./pages/Financeiro";
 
 export default function App() {
   const [autenticado, setAutenticado] = useState(estaAutenticado());
   const [tab, setTab] = useState("vales");
   const [alvoVales, setAlvoVales] = useState(null); // pedido atrasado clicado nas Análises
 
-  const WIDE_TABS = ["pedidos", "vales", "pagamentos", "analises", "base", "prospeccao", "historico", "vendas", "produtos"];
-  const FULL_TABS = ["pedidos", "vales", "pagamentos", "analises", "base", "prospeccao", "historico", "vendas", "produtos"];
+  const WIDE_TABS = ["pedidos", "vales", "pagamentos", "analises", "base", "prospeccao", "historico", "vendas", "produtos", "financeiro"];
+  const FULL_TABS = ["pedidos", "vales", "pagamentos", "analises", "base", "prospeccao", "historico", "vendas", "produtos", "financeiro"];
 
   if (!autenticado) {
     return <LoginGate onEntrar={() => setAutenticado(true)} />;
@@ -41,6 +42,7 @@ export default function App() {
       {tab === "historico" && <Historico />}
       {tab === "vendas" && <Vendas />}
       {tab === "produtos" && <Produtos />}
+      {tab === "financeiro" && <Financeiro />}
     </Layout>
   );
 }

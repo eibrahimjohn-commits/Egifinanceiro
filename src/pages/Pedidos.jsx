@@ -294,8 +294,9 @@ export default function Pedidos() {
   // (valor dividido igualmente, datas espaçadas até o prazo do último
   // cheque) — mas dá pra editar cada folha individualmente depois. A edição
   // manual fica guardada em parcelasManual até os campos de base mudarem.
-  function parcelasDaForma(f) {
-    return f.parcelasManual || calcularParcelasCheque(f.prazoUltimoCheque, f.numFolhas, f.valorTotal);
+  function parcelasDaForma(f, valorTotalEfetivo) {
+    const total = valorTotalEfetivo !== undefined ? valorTotalEfetivo : f.valorTotal;
+    return f.parcelasManual || calcularParcelasCheque(f.prazoUltimoCheque, f.numFolhas, total);
   }
 
   // Enquanto digita: só grava o texto bruto daquela folha, sem redistribuir
@@ -305,9 +306,17 @@ export default function Pedidos() {
   function atualizarParcela(i, parcelaIndex, campo, valor) {
     setFormas((arr) => arr.map((f, idx) => {
       if (idx !== i) return f;
-      const base = parcelasDaForma(f);
+      const base = parcelasDaForma(f, f.autoPreencher ? valorEfetivoForma(i) : undefined);
       const novasParcelas = base.map((p, pi) => (pi === parcelaIndex ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p));
-      return { ...f, parcelasManual: novasParcelas };
+      // Editar o valor de uma folha atualiza automaticamente o "Valor total em
+      // cheque" pra refletir a nova soma — assim os dois campos nunca ficam
+      // desencontrados. Enquanto "preencher automático" estiver marcado, esse
+      // campo é só exibição (o valor de verdade vem de valorEfetivoForma), então
+      // a soma aqui não tem efeito prático até o automático ser desmarcado.
+      const novoValorTotal = campo === "valor"
+        ? novasParcelas.reduce((s, p) => s + (Number(p.valor) || 0), 0)
+        : f.valorTotal;
+      return { ...f, parcelasManual: novasParcelas, valorTotal: novoValorTotal };
     }));
   }
 
@@ -316,7 +325,7 @@ export default function Pedidos() {
   function confirmarDataParcela(i, parcelaIndex, valorFinal) {
     setFormas((arr) => arr.map((f, idx) => {
       if (idx !== i) return f;
-      const novasParcelas = redistribuirDatasCheque(parcelasDaForma(f), parcelaIndex, valorFinal);
+      const novasParcelas = redistribuirDatasCheque(parcelasDaForma(f, f.autoPreencher ? valorEfetivoForma(i) : undefined), parcelaIndex, valorFinal);
       return {
         ...f,
         parcelasManual: novasParcelas,
@@ -336,15 +345,15 @@ export default function Pedidos() {
   const valorEsperado = calcularValorDevido(valorTotalPedido, descontoDoPedido);
 
   // Valor "de verdade" de uma forma de pagamento: se "preencher automático"
-  // está marcado, não é o que está guardado em f.valor (que fica desatualizado
-  // assim que qualquer forma anterior muda) — é sempre recalculado na hora:
-  // a primeira forma marcada vira o valor total do pedido (já com desconto);
-  // as próximas viram o que sobrou depois das formas de cima. Cheque não
-  // participa desse mecanismo (tem campo de valor próprio).
+  // está marcado, não é o que está guardado em f.valor/f.valorTotal (que fica
+  // desatualizado assim que qualquer forma anterior muda) — é sempre
+  // recalculado na hora: a primeira forma marcada vira o valor total do
+  // pedido (já com desconto); as próximas viram o que sobrou depois das
+  // formas de cima. Cheque usa o campo valorTotal como seu "valor manual".
   function valorEfetivoForma(i) {
     const f = formas[i];
-    if (f.tipo === "cheque") return Number(f.valorTotal) || 0;
-    if (!f.autoPreencher) return Number(f.valor) || 0;
+    const valorManual = f.tipo === "cheque" ? Number(f.valorTotal) || 0 : Number(f.valor) || 0;
+    if (!f.autoPreencher) return valorManual;
     if (i === 0) return Math.max(0, valorEsperado);
     let somaAnteriores = 0;
     for (let j = 0; j < i; j++) somaAnteriores += valorEfetivoForma(j);
@@ -405,7 +414,7 @@ export default function Pedidos() {
         .filter(({ valorEfetivo }) => valorEfetivo > 0)
         .map(({ f, valorEfetivo }) => {
           if (f.tipo === "cheque") {
-            const parcelas = parcelasDaForma(f);
+            const parcelas = parcelasDaForma(f, f.autoPreencher ? valorEfetivo : undefined);
             return {
               tipo: "cheque",
               valor: valorEfetivo,
@@ -766,13 +775,11 @@ export default function Pedidos() {
                   onClick={() => removeForma(i)}>✕</button>
               )}
             </div>
-            {f.tipo !== "cheque" && (
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-soft)", marginTop: 6, fontWeight: 400 }}>
-                <input type="checkbox" checked={Boolean(f.autoPreencher)}
-                  onChange={(e) => updateForma(i, "autoPreencher", e.target.checked)} />
-                {i === 0 ? "Valor total" : "Restante (total menos as formas de cima)"}
-              </label>
-            )}
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-soft)", marginTop: 6, fontWeight: 400 }}>
+              <input type="checkbox" checked={Boolean(f.autoPreencher)}
+                onChange={(e) => updateForma(i, "autoPreencher", e.target.checked)} />
+              {i === 0 ? "Valor total" : "Restante (total menos as formas de cima)"}
+            </label>
 
             {f.tipo === "conta_terceiros" && (
               <div className="field">
@@ -788,7 +795,9 @@ export default function Pedidos() {
                 <div className="row">
                   <div className="field">
                     <label>Valor total em cheque (R$)</label>
-                    <input className="input" type="number" step="0.01" min="0" value={f.valorTotal}
+                    <input className="input" type="number" step="0.01" min="0"
+                      value={f.autoPreencher ? valorEfetivoForma(i).toFixed(2) : f.valorTotal}
+                      readOnly={f.autoPreencher}
                       onChange={(e) => updateForma(i, "valorTotal", e.target.value)} />
                   </div>
                   <div className="field">
@@ -805,9 +814,9 @@ export default function Pedidos() {
                       : updateForma(i, "prazoUltimoCheque", e.target.value))}
                     onBlur={(e) => { if (f.parcelasManual) confirmarDataParcela(i, f.parcelasManual.length - 1, e.target.value); }} />
                 </div>
-                {f.valorTotal && f.prazoUltimoCheque && Number(f.numFolhas) > 0 && (
+                {(f.autoPreencher ? valorEfetivoForma(i) > 0 : f.valorTotal) && f.prazoUltimoCheque && Number(f.numFolhas) > 0 && (
                   <div style={{ marginTop: 4 }}>
-                    {parcelasDaForma(f).map((p, pi) => (
+                    {parcelasDaForma(f, f.autoPreencher ? valorEfetivoForma(i) : undefined).map((p, pi) => (
                       <div key={p.numero} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
                         <span style={{ fontSize: 13, color: "var(--ink-soft)", flexShrink: 0, width: 34 }}>N°{p.numero}</span>
                         <input className="input" type="number" step="0.01" value={p.valor}
@@ -821,11 +830,15 @@ export default function Pedidos() {
                     ))}
                     {f.parcelasManual && (
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginTop: 2 }}>
-                        {Math.abs(parcelasDaForma(f).reduce((s, p) => s + Number(p.valor || 0), 0) - Number(f.valorTotal)) > 0.01 ? (
-                          <span style={{ color: "var(--red)" }}>
-                            Soma das folhas ({formatCurrency(parcelasDaForma(f).reduce((s, p) => s + Number(p.valor || 0), 0))}) diferente do valor total em cheque
-                          </span>
-                        ) : <span style={{ color: "var(--ink-soft)" }}>Folhas editadas manualmente</span>}
+                        {(() => {
+                          const totalEfetivo = f.autoPreencher ? valorEfetivoForma(i) : (Number(f.valorTotal) || 0);
+                          const somaFolhas = parcelasDaForma(f, f.autoPreencher ? totalEfetivo : undefined).reduce((s, p) => s + Number(p.valor || 0), 0);
+                          return Math.abs(somaFolhas - totalEfetivo) > 0.01 ? (
+                            <span style={{ color: "var(--red)" }}>
+                              Soma das folhas ({formatCurrency(somaFolhas)}) diferente do valor total em cheque
+                            </span>
+                          ) : <span style={{ color: "var(--ink-soft)" }}>Folhas editadas manualmente</span>;
+                        })()}
                         <button type="button" className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 8px" }}
                           onClick={() => recalcularParcelasAutomaticamente(i)}>
                           Recalcular automaticamente

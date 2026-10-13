@@ -116,6 +116,14 @@ export const ESTADOS_BR = [
   "PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO",
 ];
 
+// Rótulo em português de uma forma de pagamento, incluindo "legado" (dados
+// importados da planilha antiga, que não é uma opção selecionável no
+// formulário mas aparece nos registros históricos).
+export function labelFormaPagamento(tipo) {
+  if (tipo === "legado") return "Legado";
+  return FORMAS_PAGAMENTO.find((f) => f.value === tipo)?.label || tipo || "(sem forma)";
+}
+
 export function formatCurrency(value) {
   const n = Number(value) || 0;
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });

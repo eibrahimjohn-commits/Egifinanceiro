@@ -254,7 +254,12 @@ export default function Analises({ onAbrirNoVales }) {
   });
 
   // Só entra no ranking quem já comprou alguma vez — ticket médio e
-  // frequência não fazem sentido pra quem nunca teve pedido.
+  // frequência não fazem sentido pra quem nunca teve pedido. "Já comprou"
+  // conta de duas formas: pedido lançado de verdade no sistema (dá ticket
+  // médio E frequência), ou só o resumo da planilha antiga importada
+  // (campo mediaCompra gravado direto no cadastro — dá ticket médio, mas
+  // nunca veio com contagem de quantas compras foram, então frequência
+  // fica sem dado pra esse caso, igual já fazemos com capital social).
   const baseRanking = Array.from(gruposTodos.values())
     .map((g) => {
       const idsDoGrupo = new Set(g.clientes.map((c) => c.id));
@@ -263,19 +268,27 @@ export default function Analises({ onAbrirNoVales }) {
       const faturamentoTotal = pedidosDoGrupo.reduce((s, p) => s + valorDevidoDoPedido(p), 0);
       const capitaisSociais = g.clientes.map((c) => c.infoExtra?.capitalSocial).filter((v) => v != null);
       const qtdChequesDevolvidos = g.clientes.reduce((s, c) => s + (chequesDevPorCliente.get(c.id) || 0), 0);
+      const mediasAntigas = g.clientes.map((c) => Number(c.mediaCompra) || 0).filter((v) => v > 0);
+      const temHistoricoAntigo = qtdPedidos === 0 && mediasAntigas.length > 0;
       return {
         ...g,
         qtdPedidos,
-        ticketMedio: qtdPedidos ? faturamentoTotal / qtdPedidos : 0,
+        temHistoricoAntigo,
+        ticketMedio: qtdPedidos ? faturamentoTotal / qtdPedidos
+          : temHistoricoAntigo ? mediasAntigas.reduce((s, v) => s + v, 0) / mediasAntigas.length : 0,
         capitalSocial: capitaisSociais.length ? capitaisSociais.reduce((s, v) => s + v, 0) : null,
         qtdChequesDevolvidos,
       };
     })
-    .filter((g) => g.qtdPedidos > 0);
+    .filter((g) => g.qtdPedidos > 0 || g.temHistoricoAntigo);
 
   const valoresCapitalSocial = baseRanking.map((g) => g.capitalSocial).filter((v) => v != null).sort((a, b) => a - b);
   const valoresTicketMedio = baseRanking.map((g) => g.ticketMedio).sort((a, b) => a - b);
-  const valoresFrequencia = baseRanking.map((g) => g.qtdPedidos).sort((a, b) => a - b);
+  // Frequência só compara entre quem tem contagem real de pedidos — o grupo
+  // só com histórico antigo entra no percentil dos outros como nota neutra
+  // (abaixo) em vez de entrar como 0 na comparação (seria fingir que nunca
+  // comprou, quando só não sabemos QUANTAS vezes).
+  const valoresFrequencia = baseRanking.filter((g) => !g.temHistoricoAntigo).map((g) => g.qtdPedidos).sort((a, b) => a - b);
 
   const rankingClientes = baseRanking
     .map((g) => {
@@ -283,7 +296,7 @@ export default function Analises({ onAbrirNoVales }) {
       // simplesmente ainda não teve o CNPJ consultado.
       const notaCapitalSocial = g.capitalSocial != null ? percentilDe(g.capitalSocial, valoresCapitalSocial) : 50;
       const notaTicketMedio = percentilDe(g.ticketMedio, valoresTicketMedio);
-      const notaFrequencia = percentilDe(g.qtdPedidos, valoresFrequencia);
+      const notaFrequencia = g.temHistoricoAntigo ? 50 : percentilDe(g.qtdPedidos, valoresFrequencia);
       const notaChequesDevolvidos = Math.max(0, 100 - g.qtdChequesDevolvidos * PENALIDADE_POR_CHEQUE_DEVOLVIDO);
       const pesos = pesosRanking;
       const somaPesos = pesos.capitalSocial + pesos.ticketMedio + pesos.frequencia + pesos.chequesDevolvidos;
@@ -836,8 +849,10 @@ export default function Analises({ onAbrirNoVales }) {
             Cada indicador vira uma nota de 0 a 100 (posição relativa entre os clientes, exceto cheques
             devolvidos, que começa em 100 e perde {PENALIDADE_POR_CHEQUE_DEVOLVIDO} pontos por cheque). O placar final é a
             média dessas notas, pesada como você ajustar abaixo. Sem capital social cadastrado conta nota
-            neutra (50) — não penaliza quem ainda não teve o CNPJ consultado. Só entra quem já comprou
-            alguma vez.
+            neutra (50) — não penaliza quem ainda não teve o CNPJ consultado. Cliente cujo único histórico
+            é da planilha antiga importada entra com o ticket médio de lá, mas sem nota de frequência
+            (também neutra — aquela planilha não trouxe quantas vezes cada um comprou). Só entra quem já
+            comprou alguma vez, por pedido lançado ou pela planilha antiga.
           </p>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16, background: "var(--bg)", borderRadius: 10, padding: 12 }}>
             {[
@@ -869,7 +884,7 @@ export default function Analises({ onAbrirNoVales }) {
                   <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "var(--ink-soft)" }}>
                     <span>💰 {g.capitalSocial != null ? formatCurrency(g.capitalSocial) : "sem dado"} (nota {g.notaCapitalSocial.toFixed(0)})</span>
                     <span>🎯 Ticket médio {formatCurrency(g.ticketMedio)} (nota {g.notaTicketMedio.toFixed(0)})</span>
-                    <span>🔁 {g.qtdPedidos} pedido(s) (nota {g.notaFrequencia.toFixed(0)})</span>
+                    <span>🔁 {g.temHistoricoAntigo ? "sem contagem (histórico antigo)" : `${g.qtdPedidos} pedido(s)`} (nota {g.notaFrequencia.toFixed(0)})</span>
                     <span style={g.qtdChequesDevolvidos > 0 ? { color: "var(--red)" } : undefined}>
                       🚫 {g.qtdChequesDevolvidos} cheque(s) devolvido(s) (nota {g.notaChequesDevolvidos.toFixed(0)})
                     </span>

@@ -10,7 +10,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { todayISO, valorDevidoDoPedido, valorPagoDoPedido, saldoDoPedido, calcularValorDevido } from "./constants";
+import { todayISO, valorDevidoDoPedido, valorPagoDoPedido, saldoDoPedido, calcularValorDevido, FORMAS_RECEBIMENTO_IMEDIATO } from "./constants";
 import { registrarLog } from "./auditoria";
 
 const pedidosRef = collection(db, "pedidos");
@@ -49,6 +49,36 @@ export async function criarPedido(pedido) {
   delete payload.forcarPago;
   const docRef = await addDoc(pedidosRef, payload);
   return docRef.id;
+}
+
+// Lista os "eventos de recebimento" de um conjunto de pedidos: cada entrada
+// de dinheiro que de fato entrou (nunca o Vale pendente), já com a data certa
+// de cada um — usado na aba Financeiro. Duas origens, nunca as duas juntas
+// pro mesmo dinheiro:
+// 1) formasPagamento com recebimento imediato (dinheiro, cheque, conta de 3º):
+//    contam na data do próprio pedido (p.data) — são creditadas na hora da
+//    venda, mesmo cheque com data futura de compensação (ver constants.js).
+// 2) pagamentos (histórico de baixas): PIX/Depósito só entram aqui quando
+//    confirmados, e "legado"/baixas de vale sempre têm sua própria data real
+//    de recebimento — nunca duplicam o que já foi contado em (1), porque Vale
+//    nunca é um recebimento imediato.
+// Pedidos arquivados entram também: "arquivado" é só "já pago", o dinheiro
+// continua tendo entrado numa data real.
+export function listarEventosRecebimento(pedidos) {
+  const eventos = [];
+  pedidos.forEach((p) => {
+    (p.formasPagamento || []).forEach((f) => {
+      if (FORMAS_RECEBIMENTO_IMEDIATO.includes(f.tipo) && Number(f.valor) > 0) {
+        eventos.push({ tipo: f.tipo, valor: Number(f.valor), data: p.data, pedidoId: p.id, clienteNome: p.clienteNome });
+      }
+    });
+    (p.pagamentos || []).forEach((pg) => {
+      if (pg.data && Number(pg.valor) > 0) {
+        eventos.push({ tipo: pg.formaPagamento, valor: Number(pg.valor), data: pg.data, pedidoId: p.id, clienteNome: p.clienteNome });
+      }
+    });
+  });
+  return eventos;
 }
 
 export async function listarPedidos() {

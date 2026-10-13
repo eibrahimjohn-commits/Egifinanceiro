@@ -14,6 +14,7 @@ const TABS = [
   { id: "historico", label: "Histórico" },
   { id: "vendas", label: "Vendas" },
   { id: "produtos", label: "Produtos" },
+  { id: "financeiro", label: "Financeiro" },
 ];
 
 export default function Layout({ active, onChange, wide, full, children }) {
