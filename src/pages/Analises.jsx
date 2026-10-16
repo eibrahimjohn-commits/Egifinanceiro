@@ -4,7 +4,7 @@ import { listarPedidos, importarHistoricoPedidos, marcarConferido } from "../lib
 import { listarChequesDevolvidos } from "../lib/chequesDevolvidos";
 import { listarClientes, registrarContatoInativo, marcarTelefoneIndisponivel, reativarTelefone, marcarTelefoneVerificado, desmarcarTelefoneVerificado, definirStatusGrupoWhatsapp } from "../lib/clientes";
 import { lerHistoricoPedidos } from "../lib/importarHistorico";
-import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone, ehTelefoneFixo, linkLigar, herdarCondicoesDoGrupo, STATUS_GRUPO_WHATSAPP, statusGrupoWhatsappDe, valorDevidoDoPedido } from "../lib/constants";
+import { formatCurrency, formatDate, pedidoEstaAtrasado, linkWhatsAppInativo, linkWhatsAppConvite, saldoDoPedido, situacaoEmAbertoDoPedido, normalizarTelefone, ehTelefoneFixo, linkLigar, herdarCondicoesDoGrupo, STATUS_GRUPO_WHATSAPP, statusGrupoWhatsappDe, valorDevidoDoPedido } from "../lib/constants";
 import ClienteCadastroModal from "../components/ClienteCadastroModal";
 
 const DIAS_INATIVO = 60;
@@ -20,6 +20,8 @@ export default function Analises({ onAbrirNoVales }) {
   const [modalAberto, setModalAberto] = useState(null); // { clientes, grupoNome }
   const [ordenacaoInativos, setOrdenacaoInativos] = useState("nome_asc");
   const [ordenacaoSemContato, setOrdenacaoSemContato] = useState("ultimaCompra_desc");
+  const [ordenacaoConvites, setOrdenacaoConvites] = useState("ultimaCompra_desc");
+  const [mostrarConvidados, setMostrarConvidados] = useState(false);
   // Qual análise está aberta — lembrada no navegador entre uma visita e outra.
   const [analiseAtiva, setAnaliseAtivaState] = useState(() => {
     try { return localStorage.getItem("egi-analise-ativa") || "inativos"; } catch { return "inativos"; }
@@ -435,6 +437,40 @@ export default function Analises({ onAbrirNoVales }) {
     setModalAberto({ clientes: [c] });
   }
 
+  // Fila de convites ao grupo de WhatsApp: grupos (ou clientes sem grupo) que
+  // ainda não foram convidados, com pelo menos um celular ativo (telefone fixo
+  // não tem WhatsApp). "Convidado" sai da fila; "Já está" e "Saiu" também.
+  const celularesAtivosDoGrupo = (g) => telefonesAtivosDoGrupo(g).filter((t) => !ehTelefoneFixo(t.numero));
+  const baseConvites = Array.from(gruposTodos.values())
+    .map((g) => {
+      const ultimaCompra = g.clientes.reduce((max, c) => {
+        const u = ultimaCompraDoCliente(c);
+        return u && (!max || u > max) ? u : max;
+      }, "");
+      const convidadoEm = g.clientes.reduce((max, c) => (c.grupoWhatsappConvidadoEm && c.grupoWhatsappConvidadoEm > max ? c.grupoWhatsappConvidadoEm : max), "");
+      return { ...g, ultimaCompra, convidadoEm, statusGrupo: statusGrupoWhatsappDe(g.clientes), celulares: celularesAtivosDoGrupo(g) };
+    })
+    .filter((g) => g.celulares.length > 0);
+  const [campoOrdConvites, dirOrdConvites] = ordenacaoConvites.split("_");
+  const multOrdConvites = dirOrdConvites === "asc" ? 1 : -1;
+  const filaConvites = baseConvites
+    .filter((g) => g.statusGrupo === "nao")
+    .sort((a, b) => {
+      if (campoOrdConvites === "nome") return nomeGrupoOuCliente(a).localeCompare(nomeGrupoOuCliente(b), "pt-BR") * multOrdConvites;
+      if (campoOrdConvites === "nota") return ((notaPorChave.get(a.chave) ?? -1) - (notaPorChave.get(b.chave) ?? -1)) * multOrdConvites;
+      return (a.ultimaCompra || "").localeCompare(b.ultimaCompra || "") * multOrdConvites;
+    });
+  const convidadosAguardando = baseConvites
+    .filter((g) => g.statusGrupo === "convidado")
+    .sort((a, b) => (a.convidadoEm || "").localeCompare(b.convidadoEm || ""));
+  const totalNoGrupo = baseConvites.filter((g) => g.statusGrupo === "sim").length;
+
+  // Abrir o WhatsApp com o convite e já marcar como "convidado": a fila
+  // avança sozinha. Se não chegou a enviar, dá pra devolver pra fila.
+  function handleConvidar(g) {
+    handleStatusGrupoWhatsapp(g, "convidado");
+  }
+
   // Junta todos os telefones do cadastro (principal, alternativo, WhatsApp e
   // os que vieram da consulta pública de CNPJ), sem duplicar o mesmo número
   // vindo de fontes diferentes.
@@ -585,6 +621,7 @@ export default function Analises({ onAbrirNoVales }) {
           <option value="atrasados">🔴 Pagamentos atrasados ({atrasados.length})</option>
           <option value="inativos">😴 Clientes inativos ({gruposInativosOrdenados.length})</option>
           <option value="semContato">📵 Clientes sem contato ativo ({gruposSemContato.length})</option>
+          <option value="convites">💬 Convites ao grupo do WhatsApp ({filaConvites.length})</option>
           <option value="mapaCalor">🗺️ Mapa de calor — cidade/estado</option>
           <option value="ranking">🏆 Ranking de Clientes/Grupo ({rankingClientes.length})</option>
         </select>
@@ -755,6 +792,98 @@ export default function Analises({ onAbrirNoVales }) {
               })
             )}
           </div>
+        </div>
+        )}
+
+        {analiseAtiva === "convites" && (
+        <div className="card" id="secao-convites">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+            <h2 className="card-title" style={{ marginBottom: 0 }}>Convites ao grupo do WhatsApp</h2>
+            <select className="input" style={{ width: "auto", padding: "6px 10px", fontSize: 12 }}
+              value={ordenacaoConvites} onChange={(e) => setOrdenacaoConvites(e.target.value)}>
+              <option value="ultimaCompra_desc">Última compra (recente)</option>
+              <option value="ultimaCompra_asc">Última compra (antiga)</option>
+              <option value="nota_desc">Nota do ranking (maior)</option>
+              <option value="nome_asc">Nome (A-Z)</option>
+            </select>
+          </div>
+          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+            Na fila: <strong style={{ color: "var(--ink)" }}>{filaConvites.length}</strong> · Aguardando entrar: <strong style={{ color: "var(--ink)" }}>{convidadosAguardando.length}</strong> · Já no grupo: <strong style={{ color: "var(--ink)" }}>{totalNoGrupo}</strong>
+            <br />Clique em "Enviar convite": o WhatsApp abre com a mensagem pronta e o cliente sai da fila (vira "convidado"). Só celulares entram aqui — fixo não tem WhatsApp.
+          </div>
+          <div className="analises-lista">
+            {filaConvites.length === 0 ? (
+              <div className="empty-state" style={{ padding: 12 }}>Fila vazia — todo mundo com celular ativo já foi convidado, está no grupo ou saiu.</div>
+            ) : (
+              filaConvites.map((g) => (
+                <div key={g.chave} className="list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, cursor: "default" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <strong>{nomeGrupoOuCliente(g)}</strong>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                      {g.clientes.length > 1 && <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{g.clientes.length} CNPJs</span>}
+                      <BadgeNota chave={g.chave} />
+                    </span>
+                  </div>
+                  {g.representante && <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Rep: {g.representante}</div>}
+                  <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                    Última compra: {g.ultimaCompra ? formatDate(g.ultimaCompra) : "nunca comprou"}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {g.celulares.map(({ numero, rotulo }) => (
+                      <div key={numero} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>📞 {numero} <span style={{ fontSize: 11 }}>({rotulo})</span></span>
+                        <a href={linkWhatsAppConvite(numero, nomeGrupoOuCliente(g))} target="_blank" rel="noopener noreferrer"
+                          className="btn btn-success" style={{ fontSize: 12, padding: "4px 10px" }}
+                          onClick={() => handleConvidar(g)}>
+                          Enviar convite
+                        </a>
+                        <button type="button" className="btn btn-danger" style={{ fontSize: 12, padding: "4px 10px" }}
+                          onClick={() => handleTelefoneIndisponivel(g, numero)}>
+                          Telefone indisponível
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px", alignSelf: "flex-start" }}
+                    onClick={() => handleStatusGrupoWhatsapp(g, "sim")}>
+                    Já está no grupo
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          {convidadosAguardando.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <button type="button" className="btn btn-ghost" style={{ fontSize: 13 }} onClick={() => setMostrarConvidados((v) => !v)}>
+                {mostrarConvidados ? "▾" : "▸"} Convidados aguardando entrar ({convidadosAguardando.length})
+              </button>
+              {mostrarConvidados && (
+                <div className="analises-lista" style={{ marginTop: 8 }}>
+                  {convidadosAguardando.map((g) => (
+                    <div key={g.chave} className="list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, cursor: "default" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <strong>{nomeGrupoOuCliente(g)}</strong>
+                        <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>
+                          convidado {g.convidadoEm ? `em ${formatDate(g.convidadoEm)}` : ""}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button type="button" className="btn btn-success" style={{ fontSize: 12, padding: "4px 10px" }}
+                          onClick={() => handleStatusGrupoWhatsapp(g, "sim")}>
+                          Entrou no grupo
+                        </button>
+                        <button type="button" className="btn btn-secondary" style={{ fontSize: 12, padding: "4px 10px" }}
+                          onClick={() => handleStatusGrupoWhatsapp(g, "nao")}>
+                          Voltar pra fila
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         )}
 

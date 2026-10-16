@@ -14,6 +14,7 @@ import {
   arrayRemove,
 } from "firebase/firestore";
 import { db } from "./firebase";
+import { todayISO } from "./constants";
 
 const clientesRef = collection(db, "clientes");
 
@@ -383,6 +384,10 @@ export async function listarClientesDoGrupo(grupo) {
 // Status do cliente no grupo de novidades do WhatsApp: "nao" | "sim" | "saiu".
 export async function definirStatusGrupoWhatsapp(clienteIds, status) {
   await Promise.all(clienteIds.map((id) =>
-    updateDoc(doc(db, "clientes", id), { grupoWhatsapp: status })
+    updateDoc(doc(db, "clientes", id), {
+      grupoWhatsapp: status,
+      // data do convite, pra saber há quanto tempo está aguardando
+      grupoWhatsappConvidadoEm: status === "convidado" ? todayISO() : null,
+    })
   ));
 }

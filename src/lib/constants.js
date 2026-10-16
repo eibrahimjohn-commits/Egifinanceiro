@@ -455,6 +455,7 @@ export const LINK_GRUPO_WHATSAPP = "https://chat.whatsapp.com/Gc17Umb582s6YTzXoy
 
 export const STATUS_GRUPO_WHATSAPP = [
   { value: "nao", label: "Não está no grupo" },
+  { value: "convidado", label: "Convidado (aguardando entrar)" },
   { value: "sim", label: "Já está no grupo" },
   { value: "saiu", label: "Saiu do grupo" },
 ];
@@ -465,8 +466,22 @@ export const STATUS_GRUPO_WHATSAPP = [
 export function statusGrupoWhatsappDe(clientes) {
   const status = clientes.map((c) => c.grupoWhatsapp || "nao");
   if (status.includes("sim")) return "sim";
-  if (status.includes("saiu")) return "saiu";
+  if (status.includes("saiu")) return "saiu"; // quem saiu não é reconvidado
+  if (status.includes("convidado")) return "convidado";
   return "nao";
+}
+
+// Mensagem só de convite ao grupo (fila de convites em Análises).
+export function linkWhatsAppConvite(telefone, nomeCliente) {
+  const { numero: normalizado } = normalizarTelefone(telefone);
+  let digitos = String(normalizado || telefone || "").replace(/\D/g, "");
+  if (digitos.length <= 11) digitos = "55" + digitos;
+  const nome = primeiroNome(nomeCliente);
+  const mensagem =
+    `Olá${nome ? " " + nome : ""}, tudo bem?\n` +
+    `Estamos com um grupo de novidades da EGI, com lançamentos e promoções em primeira mão. ` +
+    `Quer fazer parte? 😁\n\n${LINK_GRUPO_WHATSAPP}`;
+  return `https://wa.me/${digitos}?text=${encodeURIComponent(mensagem)}`;
 }
 
 export function linkWhatsAppInativo(telefone, nomeCliente, convidarParaGrupo = false) {
