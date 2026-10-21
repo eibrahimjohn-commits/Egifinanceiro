@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import "../components/ui.css";
-import { listarResumoProdutos, listarImportacoes, buscarDetalheProduto, enriquecerCategorias, gravarCategoriasNosResumos, contarMesesPeriodo, definirCategoriaProduto } from "../lib/vendas";
+import { listarResumoProdutos, listarImportacoes, buscarDetalheProduto, enriquecerCategorias, gravarCategoriasNosResumos, contarMesesPeriodo, definirCategoriaProduto, categoriaCanonica } from "../lib/vendas";
 import { formatCurrency, NOMES_MES } from "../lib/constants";
 import SeletorPeriodo from "../components/SeletorPeriodo";
 import {
@@ -57,12 +57,38 @@ export default function Produtos() {
     setSubcategoriaEdit(p.subcategoria || "");
   }
 
-  async function salvarCategoriaManual(p) {
+  // Clique numa categoria (pizza / barra / legenda): filtra o ranking por ela e
+  // abre o segundo gráfico, com as subcategorias dela. Clicar de novo na mesma
+  // categoria fecha. "(sem categoria)" liga o filtro de produtos sem categoria;
+  // "Outras" é só um agrupamento, não filtra nada.
+  function selecionarCategoria(nome) {
+    if (!nome || nome === "Outras") return;
+    setLimite(100);
+    setSubcategoriaFiltro("");
+    if (nome === "(sem categoria)") {
+      setCategoriaFiltro("");
+      setSemCategoriaFiltro((v) => !v);
+      return;
+    }
+    setSemCategoriaFiltro(false);
+    setCategoriaFiltro((atual) => (atual === nome ? "" : nome));
+  }
+  // Clique numa subcategoria do segundo gráfico: filtra o ranking e rola até ele.
+  function selecionarSubcategoria(nome) {
+    if (!nome || nome === "Outras" || nome === "(sem subcategoria)") return;
+    setLimite(100);
+    setSubcategoriaFiltro((atual) => (atual === nome ? "" : nome));
+    setTimeout(() => document.getElementById("ranking-produtos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }
+
+  async function salvarCategoriaManual(p, categoriaDireta, subcategoriaDireta) {
     setSalvandoCategoria(true);
     try {
-      const categoria = categoriaEdit.trim();
-      const subcategoria = subcategoriaEdit.trim();
+      const categoria = categoriaCanonica((categoriaDireta ?? categoriaEdit).trim());
+      const subcategoria = (subcategoriaDireta ?? subcategoriaEdit).trim();
       await definirCategoriaProduto(p, mesInicio, mesFim, categoria, subcategoria);
+      setProdutoSelecionado((atual) => (atual && (atual.codigoProduto || atual.produto) === (p.codigoProduto || p.produto)
+        ? { ...atual, categoria, subcategoria } : atual));
       const chaveP = p.codigoProduto || p.produto;
       setProdutos((atual) => {
         const novo = atual.map((x) => ((x.codigoProduto || x.produto) === chaveP ? { ...x, categoria, subcategoria } : x));
@@ -252,24 +278,31 @@ export default function Produtos() {
   const temCategoria = produtos.some((p) => p.categoria);
   const totalMesesPeriodo = contarMesesPeriodo(mesInicio, mesFim);
 
-  // Pizza de participação: por categoria (padrão) ou, se uma categoria estiver
-  // selecionada no filtro, por subcategoria DENTRO dela — mais útil que
-  // mostrar uma fatia só. Agrupa em "Outras" além das 7 maiores pra não virar
-  // uma pizza ilegível quando há dezenas de categorias.
+  // Duas pizzas: a de categorias (sempre inteira, pra não perder a visão geral)
+  // e, quando uma categoria é escolhida, a das subcategorias DENTRO dela.
+  // Cada uma agrupa em "Outras" além das 7 maiores, pra não virar uma pizza
+  // ilegível quando há dezenas fatias.
   const CORES_PIZZA = ["var(--pink)", "var(--grape)", "var(--green)", "var(--yellow)", "#3b82f6", "#f97316", "#14b8a6", "var(--ink-soft)"];
-  const baseParaPizza = categoriaFiltro ? produtos.filter((p) => p.categoria === categoriaFiltro) : produtos;
-  const campoPizza = categoriaFiltro ? "subcategoria" : "categoria";
-  const porFatiaMap = new Map();
-  baseParaPizza.forEach((p) => {
-    const chave = p[campoPizza] || "(sem categoria)";
-    porFatiaMap.set(chave, (porFatiaMap.get(chave) || 0) + p.faturamento);
-  });
-  const fatiasOrdenadas = Array.from(porFatiaMap.entries()).sort((a, b) => b[1] - a[1]);
-  const totalPizza = fatiasOrdenadas.reduce((s2, [, v]) => s2 + v, 0);
-  const dadosPizza = (fatiasOrdenadas.length > 8
-    ? [...fatiasOrdenadas.slice(0, 7), ["Outras", fatiasOrdenadas.slice(7).reduce((s2, [, v]) => s2 + v, 0)]]
-    : fatiasOrdenadas
-  ).map(([nome, faturamento]) => ({ nome, faturamento, percentual: totalPizza ? (faturamento / totalPizza) * 100 : 0 }));
+  function montarFatias(lista, campo, rotuloVazio) {
+    const mapa = new Map();
+    lista.forEach((p) => {
+      const chave = p[campo] || rotuloVazio;
+      mapa.set(chave, (mapa.get(chave) || 0) + p.faturamento);
+    });
+    const ordenadas = Array.from(mapa.entries()).sort((a, b) => b[1] - a[1]);
+    const total = ordenadas.reduce((s2, [, v]) => s2 + v, 0);
+    return (ordenadas.length > 8
+      ? [...ordenadas.slice(0, 7), ["Outras", ordenadas.slice(7).reduce((s2, [, v]) => s2 + v, 0)]]
+      : ordenadas
+    ).map(([nome, faturamento]) => ({ nome, faturamento, percentual: total ? (faturamento / total) * 100 : 0 }));
+  }
+  const dadosPizza = montarFatias(produtos, "categoria", "(sem categoria)");
+  const dadosPizzaSub = categoriaFiltro
+    ? montarFatias(produtos.filter((p) => p.categoria === categoriaFiltro), "subcategoria", "(sem subcategoria)")
+    : [];
+  const totalCategoriaSelecionada = categoriaFiltro
+    ? produtos.filter((p) => p.categoria === categoriaFiltro).reduce((s2, p) => s2 + p.faturamento, 0)
+    : 0;
 
   return (
     <div>
@@ -385,22 +418,68 @@ export default function Produtos() {
           </div>
 
           {dadosPizza.length > 1 && (
-            <div className="card">
-              <h2 className="card-title">
-                Participação {campoPizza === "subcategoria" ? `das subcategorias de ${categoriaFiltro}` : "por categoria"} no período
-              </h2>
-              <div style={{ width: "100%", height: 300 }}>
-                <ResponsiveContainer>
-                  <PieChart>
-                    <Pie data={dadosPizza} dataKey="faturamento" nameKey="nome" cx="50%" cy="50%" outerRadius={100}
-                      label={({ percentual }) => `${percentual.toFixed(0)}%`} labelLine={false}>
-                      {dadosPizza.map((_, i) => <Cell key={i} fill={CORES_PIZZA[i % CORES_PIZZA.length]} />)}
-                    </Pie>
-                    <Tooltip formatter={(v, _n, item) => [`${formatCurrency(v)} (${item.payload.percentual.toFixed(1)}%)`, item.payload.nome]} />
-                    <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontSize: 12 }} />
-                  </PieChart>
-                </ResponsiveContainer>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "stretch", marginBottom: 16 }}>
+              <div className="card" style={{ flex: "1 1 380px", marginBottom: 0 }}>
+                <h2 className="card-title">Participação por categoria no período</h2>
+                <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: -6, marginBottom: 6 }}>
+                  Clique numa categoria pra ver as subcategorias dela e filtrar o ranking.
+                </div>
+                <div style={{ width: "100%", height: 300 }}>
+                  <ResponsiveContainer>
+                    <PieChart>
+                      <Pie data={dadosPizza} dataKey="faturamento" nameKey="nome" cx="50%" cy="50%" outerRadius={100}
+                        style={{ cursor: "pointer" }} onClick={(d) => selecionarCategoria(d?.nome ?? d?.payload?.nome)}
+                        label={({ percentual }) => `${percentual.toFixed(0)}%`} labelLine={false}>
+                        {dadosPizza.map((d, i) => (
+                          <Cell key={i} fill={CORES_PIZZA[i % CORES_PIZZA.length]} style={{ cursor: "pointer" }}
+                            fillOpacity={categoriaFiltro && d.nome !== categoriaFiltro ? 0.35 : 1} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(v, _n, item) => [`${formatCurrency(v)} (${item.payload.percentual.toFixed(1)}%)`, item.payload.nome]} />
+                      <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontSize: 12, cursor: "pointer" }}
+                        onClick={(e) => selecionarCategoria(e?.value)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
+
+              {categoriaFiltro && (
+                <div className="card" style={{ flex: "1 1 380px", marginBottom: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <h2 className="card-title">Subcategorias de {categoriaFiltro}</h2>
+                    <button type="button" className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 8px" }}
+                      onClick={() => selecionarCategoria(categoriaFiltro)}>✕ Fechar</button>
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: -6, marginBottom: 6 }}>
+                    {formatCurrency(totalCategoriaSelecionada)} no período. Clique numa subcategoria pra filtrar o ranking.
+                  </div>
+                  {dadosPizzaSub.length > 1 ? (
+                    <div style={{ width: "100%", height: 300 }}>
+                      <ResponsiveContainer>
+                        <PieChart>
+                          <Pie data={dadosPizzaSub} dataKey="faturamento" nameKey="nome" cx="50%" cy="50%" outerRadius={100}
+                            style={{ cursor: "pointer" }} onClick={(d) => selecionarSubcategoria(d?.nome ?? d?.payload?.nome)}
+                            label={({ percentual }) => `${percentual.toFixed(0)}%`} labelLine={false}>
+                            {dadosPizzaSub.map((d, i) => (
+                              <Cell key={i} fill={CORES_PIZZA[i % CORES_PIZZA.length]} style={{ cursor: "pointer" }}
+                                fillOpacity={subcategoriaFiltro && d.nome !== subcategoriaFiltro ? 0.35 : 1} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(v, _n, item) => [`${formatCurrency(v)} (${item.payload.percentual.toFixed(1)}%)`, item.payload.nome]} />
+                          <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontSize: 12, cursor: "pointer" }}
+                            onClick={(e) => selecionarSubcategoria(e?.value)} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="empty-state" style={{ padding: 12 }}>
+                      {dadosPizzaSub[0]
+                        ? `Todos os produtos dessa categoria estão em: ${dadosPizzaSub[0].nome}.`
+                        : "Sem subcategorias nessa categoria."}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -414,22 +493,29 @@ export default function Produtos() {
                     <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
                     <YAxis type="category" dataKey="categoria" tick={{ fontSize: 12 }} width={140} />
                     <Tooltip formatter={(v) => formatCurrency(v)} />
-                    <Bar dataKey="faturamento" fill="var(--grape)" radius={[0, 6, 6, 0]} />
+                    <Bar dataKey="faturamento" fill="var(--grape)" radius={[0, 6, 6, 0]} style={{ cursor: "pointer" }}
+                      onClick={(d) => selecionarCategoria(d?.categoria ?? d?.payload?.categoria)} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
           )}
 
-          <div className="card">
+          <div className="card" id="ranking-produtos">
             <h2 className="card-title">Ranking de produtos</h2>
             <div className="row" style={{ marginBottom: 12 }}>
               <input className="input" placeholder="Buscar produto ou código..." value={busca}
                 onChange={(e) => { setBusca(e.target.value); setLimite(100); }} />
               {categorias.length > 0 && (
-                <select className="input" value={categoriaFiltro}
-                  onChange={(e) => { setCategoriaFiltro(e.target.value); setSubcategoriaFiltro(""); setLimite(100); }}>
+                <select className="input" value={semCategoriaFiltro ? "__sem__" : categoriaFiltro}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSemCategoriaFiltro(v === "__sem__");
+                    setCategoriaFiltro(v === "__sem__" ? "" : v);
+                    setSubcategoriaFiltro(""); setLimite(100);
+                  }}>
                   <option value="">Todas as categorias</option>
+                  <option value="__sem__">(sem categoria) — {produtos.filter((p) => !p.categoria).length}</option>
                   {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               )}
@@ -457,7 +543,7 @@ export default function Produtos() {
               ))}
               <button type="button" className={"badge filtro-chip" + (semCategoriaFiltro ? " filtro-ativo" : "")}
                 style={{ background: "var(--ink-soft)", color: "white" }}
-                onClick={() => { setSemCategoriaFiltro((v) => !v); setLimite(100); }}>
+                onClick={() => { if (!semCategoriaFiltro) { setCategoriaFiltro(""); setSubcategoriaFiltro(""); } setSemCategoriaFiltro((v) => !v); setLimite(100); }}>
                 {semCategoriaFiltro ? "✓ " : ""}Sem categoria ({produtos.filter((p) => !p.categoria).length})
               </button>
               {(classesFiltro.size > 0 || categoriaFiltro || subcategoriaFiltro || semCategoriaFiltro) && (
@@ -546,7 +632,9 @@ export default function Produtos() {
       )}
 
       {produtoSelecionado && (
-        <ModalProduto produto={produtoSelecionado} onFechar={() => setProdutoSelecionado(null)} buscarDetalhe={buscarDetalheProduto} importacoes={importacoes} />
+        <ModalProduto produto={produtoSelecionado} onFechar={() => setProdutoSelecionado(null)} buscarDetalhe={buscarDetalheProduto} importacoes={importacoes}
+          categorias={categorias} subcategorias={subcategorias}
+          onSalvarCategoria={(categoria, subcategoria) => salvarCategoriaManual(produtoSelecionado, categoria, subcategoria)} />
       )}
     </div>
   );

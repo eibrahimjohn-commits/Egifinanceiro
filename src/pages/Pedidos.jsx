@@ -273,7 +273,10 @@ export default function Pedidos() {
       // Mudar valor total, número de folhas ou prazo refaz a divisão
       // automática do zero — qualquer edição manual feita antes é descartada,
       // já que os parâmetros de base mudaram.
-      const limpaEdicaoManual = ["valorTotal", "numFolhas", "prazoUltimoCheque"].includes(campo);
+      // Religar o "preencher automático" também refaz as folhas: o total volta a
+      // ser o do pedido e as folhas editadas à mão deixariam de bater com ele.
+      const limpaEdicaoManual = ["valorTotal", "numFolhas", "prazoUltimoCheque"].includes(campo)
+        || (campo === "autoPreencher" && valor === true);
       const novaForma = { ...f, [campo]: valor, ...(limpaEdicaoManual ? { parcelasManual: null } : {}) };
       // Ao trocar o tipo pra cheque, já sugere um prazo padrão de 30 dias pro
       // último cheque (com 1 folha, é o próprio cheque; com mais folhas, dá o
@@ -308,15 +311,11 @@ export default function Pedidos() {
       if (idx !== i) return f;
       const base = parcelasDaForma(f, f.autoPreencher ? valorEfetivoForma(i) : undefined);
       const novasParcelas = base.map((p, pi) => (pi === parcelaIndex ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p));
-      // Editar o valor de uma folha atualiza automaticamente o "Valor total em
-      // cheque" pra refletir a nova soma — assim os dois campos nunca ficam
-      // desencontrados. Enquanto "preencher automático" estiver marcado, esse
-      // campo é só exibição (o valor de verdade vem de valorEfetivoForma), então
-      // a soma aqui não tem efeito prático até o automático ser desmarcado.
-      const novoValorTotal = campo === "valor"
-        ? novasParcelas.reduce((s, p) => s + (Number(p.valor) || 0), 0)
-        : f.valorTotal;
-      return { ...f, parcelasManual: novasParcelas, valorTotal: novoValorTotal };
+      if (campo !== "valor") return { ...f, parcelasManual: novasParcelas };
+      const soma = novasParcelas.reduce((s, p) => s + (Number(p.valor) || 0), 0);
+      // O total é sempre a soma das folhas: editar uma folha à mão assume o
+      // controle do total, então o "preencher automático" é desmarcado.
+      return { ...f, parcelasManual: novasParcelas, valorTotal: Number(soma.toFixed(2)), autoPreencher: false };
     }));
   }
 
@@ -363,6 +362,19 @@ export default function Pedidos() {
   const valorAlocado = formas.reduce((s, _f, i) => s + valorEfetivoForma(i), 0);
   const diferenca = valorEsperado - valorAlocado;
   const margemOk = Math.abs(diferenca) <= valorEsperado * 0.005;
+
+  // Pra onde o pedido vai ao ser lançado — usado tanto na mensagem exibida
+  // antes de salvar quanto no próprio salvamento, pra nunca divergirem.
+  function calcularDestinoDoPedido() {
+    const usadas = formas
+      .map((f, i) => ({ tipo: f.tipo, valor: valorEfetivoForma(i) }))
+      .filter((x) => x.valor > 0);
+    const pago = usadas.filter((x) => FORMAS_RECEBIMENTO_IMEDIATO.includes(x.tipo)).reduce((s, x) => s + x.valor, 0);
+    const pctAberto = valorEsperado > 0 ? ((valorEsperado - pago) / valorEsperado) * 100 : 0;
+    const quitado = podeIrDireitoParaRecebidos(pctAberto, usadas);
+    const temRep = !!cliente.representante?.trim();
+    return { quitado, direitoRecebidos: quitado && !temRep, direitoComissoes: quitado && temRep };
+  }
 
   async function handleSalvar(e) {
     e.preventDefault();
@@ -435,7 +447,9 @@ export default function Pedidos() {
       if (faltante > margem) {
         const valorVale = Number(faltante.toFixed(2));
         formasPagamento.push({ tipo: "vale", valor: valorVale });
-        avisoVale = `Diferença de ${formatCurrency(valorVale)} lançada como vale.`;
+        avisoVale = calcularDestinoDoPedido().quitado
+          ? `Diferença de ${formatCurrency(valorVale)} (até 5%) aceita.`
+          : `Diferença de ${formatCurrency(valorVale)} lançada como vale.`;
       }
 
       const valorPago = formasPagamento
@@ -860,7 +874,12 @@ export default function Pedidos() {
             {margemOk
               ? "✓ Valor alocado bate com o esperado (após desconto)"
               : diferenca > 0
-              ? `Faltam ${formatCurrency(diferenca)} — a diferença será lançada como vale ao salvar`
+              ? (() => {
+                  const d = calcularDestinoDoPedido();
+                  if (d.direitoRecebidos) return `Faltam ${formatCurrency(diferenca)} (até 5%) — o pedido vai direto pra Recebidos`;
+                  if (d.direitoComissoes) return `Faltam ${formatCurrency(diferenca)} (até 5%) — o pedido vai direto pra Comissões`;
+                  return `Faltam ${formatCurrency(diferenca)} — a diferença será lançada como vale ao salvar`;
+                })()
               : `Alocado ${formatCurrency(-diferenca)} a mais que o esperado`}
           </div>
         )}

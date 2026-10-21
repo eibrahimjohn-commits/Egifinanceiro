@@ -29,6 +29,24 @@ function slug(str) {
     .replace(/^-+|-+$/g, "") || "sem-nome";
 }
 
+// Categorias que na prática são a mesma coisa, mas chegam com nomes diferentes
+// (grafia no singular/plural, ou duas linhas de cadastro pro mesmo grupo).
+// Sempre convertidas pro nome canônico na LEITURA e na gravação, então o
+// gráfico e os filtros nunca mostram as duas versões separadas. Chave = slug.
+const CATEGORIAS_UNIFICADAS = {
+  "cosmetico": "Cosméticos",
+  "cosmeticos": "Cosméticos",
+  "prendedor-de-cabelo": "Acessório de Cabelo",
+  "prendedores-de-cabelo": "Acessório de Cabelo",
+  "acessorio-de-cabelo": "Acessório de Cabelo",
+  "acessorios-de-cabelo": "Acessório de Cabelo",
+};
+export function categoriaCanonica(nome) {
+  const limpo = String(nome || "").trim();
+  if (!limpo) return "";
+  return CATEGORIAS_UNIFICADAS[slug(limpo)] || limpo;
+}
+
 // Reconhece as colunas pelo nome (com folga pra acento/maiúscula/variação),
 // igual ao padrão já usado no import de clientes — assim uma planilha
 // exportada com cabeçalho ligeiramente diferente não quebra o import.
@@ -136,7 +154,7 @@ async function lerCatalogoPortal() {
     const porNome = {};
     snap.docs.forEach((d) => {
       const p = d.data();
-      const info = { categoria: p.category || "", subcategoria: p.subcategory || "" };
+      const info = { categoria: categoriaCanonica(p.category), subcategoria: p.subcategory || "" };
       if (p.code) porCodigo[String(p.code).trim()] = info;
       // O nome/descrição pode vir em campos diferentes dependendo de como
       // aquele produto foi cadastrado no Portal — tenta os mais prováveis.
@@ -382,7 +400,7 @@ export async function listarResumoProdutos(mesInicio, mesFim) {
   linhas.forEach((l) => {
     const chave = l.codigoProduto || l.produto;
     const atual = agrupado.get(chave) || {
-      codigoProduto: l.codigoProduto, produto: l.produto, categoria: l.categoria, subcategoria: l.subcategoria,
+      codigoProduto: l.codigoProduto, produto: l.produto, categoria: categoriaCanonica(l.categoria), subcategoria: l.subcategoria,
       qtd: 0, faturamento: 0, mesesComVenda: 0,
     };
     atual.qtd += l.qtd;
@@ -406,6 +424,7 @@ export async function listarResumoProdutos(mesInicio, mesFim) {
 // gravarCategoriasNosResumos) só toca em quem está com o campo vazio, essa
 // escolha manual nunca é substituída depois.
 export async function definirCategoriaProduto(produto, mesInicio, mesFim, categoria, subcategoria) {
+  categoria = categoriaCanonica(categoria);
   const filtroProduto = produto.codigoProduto
     ? where("codigoProduto", "==", produto.codigoProduto)
     : where("produto", "==", produto.produto);
@@ -437,6 +456,8 @@ export function contarMesesPeriodo(mesInicio, mesFim) {
 // Só preenche o que está vazio — categoria já gravada é mantida.
 export async function enriquecerCategorias(produtos) {
   if (!produtos?.length) return produtos || [];
+  produtos = produtos.map((p) => (p.categoria && categoriaCanonica(p.categoria) !== p.categoria
+    ? { ...p, categoria: categoriaCanonica(p.categoria) } : p));
   if (produtos.every((p) => p.categoria)) return produtos;
   const catalogo = await buscarCatalogoPortal();
   if (!Object.keys(catalogo.porCodigo).length && !Object.keys(catalogo.porNome).length) return produtos;

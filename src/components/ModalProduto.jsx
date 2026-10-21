@@ -29,7 +29,22 @@ function todosMesesImportados(importacoes) {
   return lista;
 }
 
-export default function ModalProduto({ produto, onFechar, buscarDetalhe, importacoes }) {
+export default function ModalProduto({ produto, onFechar, buscarDetalhe, importacoes, categorias = [], subcategorias = [], onSalvarCategoria }) {
+  const [editandoCat, setEditandoCat] = useState(false);
+  const [catEdit, setCatEdit] = useState("");
+  const [subEdit, setSubEdit] = useState("");
+  const [salvandoCat, setSalvandoCat] = useState(false);
+
+  async function salvarCat() {
+    setSalvandoCat(true);
+    try {
+      await onSalvarCategoria(catEdit, subEdit);
+      setEditandoCat(false);
+    } finally {
+      setSalvandoCat(false);
+    }
+  }
+
   const [carregando, setCarregando] = useState(true);
   const [detalhe, setDetalhe] = useState(null);
   const [aba, setAba] = useState("historico"); // historico | ultimoAno
@@ -65,9 +80,38 @@ export default function ModalProduto({ produto, onFechar, buscarDetalhe, importa
           <h2 className="card-title" style={{ marginBottom: 0 }}>{produto.produto || "(sem nome)"}</h2>
           <button className="btn btn-ghost" style={{ padding: "4px 10px" }} onClick={onFechar}>✕</button>
         </div>
-        <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 14 }}>
-          {produto.codigoProduto} {produto.categoria && `· ${produto.categoria}`}{produto.subcategoria && ` / ${produto.subcategoria}`}
-        </div>
+        <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>Código {produto.codigoProduto}</div>
+        {editandoCat ? (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}>
+            <div style={{ flex: "1 1 160px" }}>
+              <label style={{ fontSize: 11, color: "var(--ink-soft)" }}>Grupo (categoria)</label>
+              <input className="input" list="modal-lista-categorias" value={catEdit} autoFocus
+                onChange={(e) => setCatEdit(e.target.value)} placeholder="Ex: Acessório de Cabelo" />
+            </div>
+            <div style={{ flex: "1 1 160px" }}>
+              <label style={{ fontSize: 11, color: "var(--ink-soft)" }}>Subgrupo (subcategoria)</label>
+              <input className="input" list="modal-lista-subcategorias" value={subEdit}
+                onChange={(e) => setSubEdit(e.target.value)} placeholder="Ex: Rabicó" />
+            </div>
+            <button type="button" className="btn btn-primary" style={{ padding: "8px 12px" }} disabled={salvandoCat} onClick={salvarCat}>
+              {salvandoCat ? "Salvando..." : "Salvar"}
+            </button>
+            <button type="button" className="btn btn-ghost" style={{ padding: "8px 12px" }} onClick={() => setEditandoCat(false)}>Cancelar</button>
+            <datalist id="modal-lista-categorias">{categorias.map((c) => <option key={c} value={c} />)}</datalist>
+            <datalist id="modal-lista-subcategorias">{subcategorias.map((c) => <option key={c} value={c} />)}</datalist>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 14, fontSize: 13 }}>
+            <span><span style={{ color: "var(--ink-soft)" }}>Grupo:</span> <strong>{produto.categoria || <em>sem categoria</em>}</strong></span>
+            <span><span style={{ color: "var(--ink-soft)" }}>Subgrupo:</span> <strong>{produto.subcategoria || <em>sem subcategoria</em>}</strong></span>
+            {onSalvarCategoria && (
+              <button type="button" className="btn btn-ghost" style={{ fontSize: 12, padding: "3px 10px" }}
+                onClick={() => { setCatEdit(produto.categoria || ""); setSubEdit(produto.subcategoria || ""); setEditandoCat(true); }}>
+                ✎ Alterar
+              </button>
+            )}
+          </div>
+        )}
 
         {carregando ? (
           <div className="empty-state">Carregando histórico do produto...</div>
