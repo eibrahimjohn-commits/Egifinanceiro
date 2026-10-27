@@ -22,6 +22,7 @@ import {
   aplicarCondicoesDoGrupo,
   montarDescontoTexto,
   descontoAplicavelAoPedido,
+  avaliarPagamentoAVista,
 } from "../lib/constants";
 
 const CLIENTE_VAZIO = {
@@ -339,8 +340,17 @@ export default function Pedidos() {
 
   const valorTotalPedido = itens.reduce((s, it) => s + (Number(it.valor) || 0), 0);
   // O desconto do cadastro só vale pra esse pedido se a condição bater: "fixo"
-  // sempre vale, "à vista" só se o prazo escolhido aqui for de até 7 dias.
-  const descontoDoPedido = descontoAplicavelAoPedido(cliente.descontoPadrao, cliente.prazo);
+  // sempre vale; "à vista" só se as formas de pagamento DESTE pedido entram em
+  // até 7 dias da data do pedido (o prazo cadastrado do cliente não interfere).
+  // Só entram na conta as formas já preenchidas (ou marcadas como automáticas).
+  const formasParaDesconto = formas
+    .filter((f) => f.autoPreencher || (f.tipo === "cheque" ? Number(f.valorTotal) > 0 : Number(f.valor) > 0))
+    .map((f) => ({
+      tipo: f.tipo,
+      datas: f.tipo === "cheque" ? parcelasDaForma(f, f.autoPreencher ? 1 : undefined).map((p) => p.data) : [],
+    }));
+  const avaliacaoAVista = avaliarPagamentoAVista(formasParaDesconto, itens[0]?.data || todayISO());
+  const descontoDoPedido = descontoAplicavelAoPedido(cliente.descontoPadrao, avaliacaoAVista.aVista);
   const valorEsperado = calcularValorDevido(valorTotalPedido, descontoDoPedido);
 
   // Valor "de verdade" de uma forma de pagamento: se "preencher automático"
@@ -361,19 +371,31 @@ export default function Pedidos() {
 
   const valorAlocado = formas.reduce((s, _f, i) => s + valorEfetivoForma(i), 0);
   const diferenca = valorEsperado - valorAlocado;
-  const margemOk = Math.abs(diferenca) <= valorEsperado * 0.005;
+  // Falta até a margem (0,5%; só 1 centavo se o pedido tem desconto) conta como
+  // "bate". Sobra além de 1 centavo não: é pagamento a mais, vira "A ver".
+  const margemFalta = descontoDoPedido ? 0.01 : valorEsperado * 0.005;
+  const margemOk = diferenca <= margemFalta && diferenca >= -0.01;
 
   // Pra onde o pedido vai ao ser lançado — usado tanto na mensagem exibida
   // antes de salvar quanto no próprio salvamento, pra nunca divergirem.
+  // Regras:
+  // - Pagou a MAIS que o devido: nunca vai direto pra Recebidos/Comissões —
+  //   fica em Vales, onde aparece com a tag "A ver" (crédito do cliente).
+  // - Pedido COM desconto: a folga de 5% em aberto não vale (seria desconto em
+  //   cima de desconto) — só vai direto se o pago cobrir o valor já com desconto.
+  // - Sem desconto: até 5% em aberto ainda vai direto (e sem PIX/Depósito).
   function calcularDestinoDoPedido() {
     const usadas = formas
       .map((f, i) => ({ tipo: f.tipo, valor: valorEfetivoForma(i) }))
       .filter((x) => x.valor > 0);
     const pago = usadas.filter((x) => FORMAS_RECEBIMENTO_IMEDIATO.includes(x.tipo)).reduce((s, x) => s + x.valor, 0);
     const pctAberto = valorEsperado > 0 ? ((valorEsperado - pago) / valorEsperado) * 100 : 0;
-    const quitado = podeIrDireitoParaRecebidos(pctAberto, usadas);
+    const temDesconto = !!descontoDoPedido;
+    const pagouAMais = pago - valorEsperado > 0.01;
+    const toleranciaPct = temDesconto ? (valorEsperado > 0 ? (0.01 / valorEsperado) * 100 : 0) : 5.0001;
+    const quitado = !pagouAMais && podeIrDireitoParaRecebidos(pctAberto, usadas, toleranciaPct);
     const temRep = !!cliente.representante?.trim();
-    return { quitado, direitoRecebidos: quitado && !temRep, direitoComissoes: quitado && temRep };
+    return { quitado, pagouAMais, temDesconto, direitoRecebidos: quitado && !temRep, direitoComissoes: quitado && temRep };
   }
 
   async function handleSalvar(e) {
@@ -442,7 +464,9 @@ export default function Pedidos() {
       // com margem de 0,5%, o restante vira Vale.
       const totalAlocado = formasPagamento.reduce((s, f) => s + f.valor, 0);
       const faltante = valorEsperado - totalAlocado;
-      const margem = valorEsperado * 0.005;
+      // Pedido com desconto não tem margem de 0,5% pra "perdoar" diferença
+      // (seria desconto sobre desconto): qualquer falta vira vale.
+      const margem = descontoDoPedido ? 0.01 : valorEsperado * 0.005;
       let avisoVale = null;
       if (faltante > margem) {
         const valorVale = Number(faltante.toFixed(2));
@@ -456,18 +480,16 @@ export default function Pedidos() {
         .filter((f) => FORMAS_RECEBIMENTO_IMEDIATO.includes(f.tipo))
         .reduce((s, f) => s + f.valor, 0);
 
-      // Se sobrou 5% ou menos em aberto e nenhuma forma usada precisa de
-      // confirmação futura (PIX/Depósito), o pedido já nasce quitado — não
-      // precisa passar por Vales. Isso só vale no momento do lançamento;
-      // depois disso, mover pra Recebidos/Comissões continua manual.
+      // Se sobrou 5% ou menos em aberto (0% se o pedido tem desconto) e nenhuma
+      // forma usada precisa de confirmação futura (PIX/Depósito), o pedido já
+      // nasce quitado — não precisa passar por Vales. Pagou a mais, nunca: fica
+      // em Vales como "A ver". Isso só vale no momento do lançamento; depois
+      // disso, mover pra Recebidos/Comissões continua manual.
       // Cliente COM representante nunca vai direto pra Recebidos — nesse
       // caso vai direto pra Comissões, porque ainda tem uma comissão a pagar.
-      const abertoNoLancamento = valorEsperado - valorPago;
-      const percentualAbertoNoLancamento = valorEsperado > 0 ? (abertoNoLancamento / valorEsperado) * 100 : 0;
-      const quitadoNoLancamento = podeIrDireitoParaRecebidos(percentualAbertoNoLancamento, formasPagamento);
-      const temRepresentante = !!cliente.representante?.trim();
-      const vaiDireitoParaRecebidos = quitadoNoLancamento && !temRepresentante;
-      const vaiDireitoParaComissoes = quitadoNoLancamento && temRepresentante;
+      const destino = calcularDestinoDoPedido();
+      const vaiDireitoParaRecebidos = destino.direitoRecebidos;
+      const vaiDireitoParaComissoes = destino.direitoComissoes;
 
       await criarPedido({
         clienteId,
@@ -681,7 +703,9 @@ export default function Pedidos() {
           <div style={{ fontSize: 12, color: descontoDoPedido ? "var(--green)" : "var(--yellow)", marginTop: -8, marginBottom: 14 }}>
             {descontoDoPedido
               ? `✓ Desconto de ${descontoNumero}% será aplicado nesse pedido.`
-              : `Esse pedido NÃO leva o desconto (condição "à vista" exige prazo de até 7 dias).`}
+              : avaliacaoAVista.temFormaSemData
+              ? `Esse pedido NÃO leva o desconto: condição "à vista" exige pagamento em até 7 dias, e há Vale/Boleto nas formas de pagamento.`
+              : `Esse pedido NÃO leva o desconto: condição "à vista" exige pagamento em até 7 dias${avaliacaoAVista.diasMaximo ? ` (o último cheque vence em ${avaliacaoAVista.diasMaximo} dias)` : ""}.`}
           </div>
         )}
         <div className="row">
@@ -878,9 +902,10 @@ export default function Pedidos() {
                   const d = calcularDestinoDoPedido();
                   if (d.direitoRecebidos) return `Faltam ${formatCurrency(diferenca)} (até 5%) — o pedido vai direto pra Recebidos`;
                   if (d.direitoComissoes) return `Faltam ${formatCurrency(diferenca)} (até 5%) — o pedido vai direto pra Comissões`;
+                  if (d.temDesconto) return `Faltam ${formatCurrency(diferenca)} — pedido com desconto não tem tolerância de 5%: a diferença será lançada como vale ao salvar`;
                   return `Faltam ${formatCurrency(diferenca)} — a diferença será lançada como vale ao salvar`;
                 })()
-              : `Alocado ${formatCurrency(-diferenca)} a mais que o esperado`}
+              : `Alocado ${formatCurrency(-diferenca)} a mais que o esperado — o pedido fica em Vales com a tag "A ver"`}
           </div>
         )}
 

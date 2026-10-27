@@ -307,7 +307,25 @@ export async function editarPagamento(pedidoId, pedidoAtual, pagamentoIndex, cam
 
   const novoValor = camposEditados.valor !== undefined ? Number(camposEditados.valor) || 0 : pagamentoAtual.valor;
   const novaData = camposEditados.data !== undefined ? camposEditados.data : pagamentoAtual.data;
-  pagamentos[pagamentoIndex] = { ...pagamentoAtual, valor: novoValor, data: novaData };
+  // Pagamento em cheque: as folhas acompanham o novo valor (mesmas datas,
+  // valores redistribuídos na mesma proporção, a última absorve o arredondamento)
+  // — senão o valor do pagamento e a soma das folhas ficariam desencontrados.
+  let parcelasAjustadas = pagamentoAtual.parcelas;
+  if (pagamentoAtual.parcelas?.length && novoValor !== pagamentoAtual.valor) {
+    const somaAntiga = pagamentoAtual.parcelas.reduce((s, p) => s + (Number(p.valor) || 0), 0);
+    let acumulado = 0;
+    parcelasAjustadas = pagamentoAtual.parcelas.map((p, i, arr) => {
+      const valor = i === arr.length - 1
+        ? Number((novoValor - acumulado).toFixed(2))
+        : Number((somaAntiga > 0 ? ((Number(p.valor) || 0) / somaAntiga) * novoValor : novoValor / arr.length).toFixed(2));
+      acumulado += valor;
+      return { ...p, valor };
+    });
+  }
+  pagamentos[pagamentoIndex] = {
+    ...pagamentoAtual, valor: novoValor, data: novaData,
+    ...(parcelasAjustadas ? { parcelas: parcelasAjustadas } : {}),
+  };
 
   const descricaoPartes = [];
   if (novoValor !== pagamentoAtual.valor) descricaoPartes.push(`valor ${pagamentoAtual.valor} → ${novoValor}`);

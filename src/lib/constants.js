@@ -22,9 +22,12 @@ export const FORMAS_QUE_PRECISAM_CONFIRMACAO = ["pix_ted", "deposito"];
 // Um pedido recém-lançado pode ir direto pra Recebidos (sem passar por Vales)
 // quando: sobrou 5% ou menos em aberto E nenhuma das formas de pagamento usadas
 // é PIX/Depósito (essas sempre precisam de confirmação futura no extrato).
-export function podeIrDireitoParaRecebidos(percentualAberto, formasPagamento) {
+// A tolerância de 5% é parametrizável: pedido que já leva desconto não pode
+// ganhar uma "folga" de 5% por cima (seria desconto em cima de desconto), então
+// quem chama passa uma tolerância mínima nesse caso.
+export function podeIrDireitoParaRecebidos(percentualAberto, formasPagamento, toleranciaPct = 5.0001) {
   const temFormaQuePrecisaConfirmar = formasPagamento.some((f) => FORMAS_QUE_PRECISAM_CONFIRMACAO.includes(f.tipo));
-  return percentualAberto <= 5.0001 && !temFormaQuePrecisaConfirmar;
+  return percentualAberto <= toleranciaPct && !temFormaQuePrecisaConfirmar;
 }
 
 // Divide um valor total em N parcelas iguais, ajustando centavos na última parcela.
@@ -315,17 +318,43 @@ export function montarDescontoTexto(numero, condicao) {
 // Dias limite pra uma condição "à vista" ainda dar direito ao desconto.
 const PRAZO_MAXIMO_DESCONTO_AVISTA = 7;
 
+// Avalia se o pagamento de um pedido é "à vista" — o que importa pro desconto
+// condicional "à vista" não é o prazo cadastrado do cliente, e sim QUANDO o
+// dinheiro de fato entra, forma por forma, a partir da data do pedido:
+// - dinheiro, PIX/TED, depósito e conta de 3º: entram na hora (à vista);
+// - cheque: à vista só se TODAS as folhas vencem em até 7 dias do pedido;
+// - vale e boleto: sem data de entrada próxima (a prazo) — tiram o à vista.
+// Tudo ou nada: basta uma forma passar de 7 dias pra o pedido inteiro deixar
+// de ser à vista. Sem nenhuma forma preenchida ainda, conta como à vista.
+// formas: [{ tipo, datas: ["YYYY-MM-DD", ...] }] (datas só pra cheque).
+export function avaliarPagamentoAVista(formas, dataPedido) {
+  const base = new Date((dataPedido || todayISO()) + "T00:00:00");
+  let diasMaximo = 0;
+  let temFormaSemData = false;
+  (formas || []).forEach((f) => {
+    if (f.tipo === "vale" || f.tipo === "boleto") { temFormaSemData = true; return; }
+    if (f.tipo !== "cheque") return; // entra na hora
+    (f.datas || []).forEach((d) => {
+      const dias = Math.round((new Date(d + "T00:00:00") - base) / 86400000);
+      // data ainda inválida (usuário digitando): não conta como à vista
+      diasMaximo = Number.isFinite(dias) ? Math.max(diasMaximo, dias) : Infinity;
+    });
+  });
+  const aVista = !temFormaSemData && diasMaximo <= PRAZO_MAXIMO_DESCONTO_AVISTA;
+  return { aVista, diasMaximo: Number.isFinite(diasMaximo) ? diasMaximo : null, temFormaSemData };
+}
+
 // Decide se o desconto padrão do cliente vale PRA ESSE pedido específico:
 // - condição "fixo" -> sempre vale.
-// - condição "à vista" -> só vale se o prazo de pagamento usado nesse pedido
-//   for de até 7 dias (ex: cliente escolheu "À vista" no prazo).
+// - condição "à vista" -> só vale se o pagamento desse pedido for à vista
+//   (ver avaliarPagamentoAVista: formas com entrada em até 7 dias).
 // Retorna o texto de desconto a gravar no pedido — vazio quando não se aplica,
 // pra não gravar um desconto que na prática não valeu dessa vez.
-export function descontoAplicavelAoPedido(descontoPadrao, prazoDias) {
+export function descontoAplicavelAoPedido(descontoPadrao, pagamentoAVista) {
   const { numero, condicao } = parseDescontoCampos(descontoPadrao);
   if (!numero) return "";
   if (condicao === "fixo") return descontoPadrao;
-  return Number(prazoDias) <= PRAZO_MAXIMO_DESCONTO_AVISTA ? descontoPadrao : "";
+  return pagamentoAVista ? descontoPadrao : "";
 }
 
 // Fonte única de verdade pro "valor total" de um pedido: sempre a soma dos

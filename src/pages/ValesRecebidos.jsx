@@ -907,6 +907,13 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     const base = parcelasDaBaixa();
     const novas = base.map((p, i) => (i === index ? { ...p, [campo]: campo === "valor" ? Number(valor) : valor } : p));
     setParcelasBaixaManual(novas);
+    // O valor do pagamento é sempre a soma das folhas: mexer no valor de uma
+    // folha atualiza o total na hora. Sem isso o pagamento era gravado com o
+    // valor antigo (ex: R$ 0,10) mesmo com folhas somando bem mais (R$ 4.064),
+    // e o excesso nunca aparecia como "A ver".
+    if (campo === "valor") {
+      setValorBaixa(novas.reduce((s, p) => s + (Number(p.valor) || 0), 0).toFixed(2));
+    }
   }
 
   // Só ao sair do campo de data (ano completo, digitação terminada) é que
@@ -929,6 +936,13 @@ export default function ValesRecebidos({ alvoAbrir, onAlvoConsumido } = {}) {
     }
     if (formaBaixa === "conta_terceiros" && !descricaoBaixa.trim()) {
       mostrarToast("Informe de quem é a conta");
+      return;
+    }
+
+    // Trava de segurança: pagamento em cheque nunca é gravado com folhas que
+    // não somam o valor do pagamento.
+    if (ehCheque && Math.abs(parcelasDaBaixa().reduce((s, p) => s + (Number(p.valor) || 0), 0) - Number(valorBaixa)) > 0.01) {
+      mostrarToast("A soma das folhas é diferente do valor do pagamento. Clique em 'Recalcular automaticamente' ou ajuste os valores.");
       return;
     }
 
